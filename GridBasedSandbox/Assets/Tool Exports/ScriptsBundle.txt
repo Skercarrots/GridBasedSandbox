@@ -1,0 +1,987 @@
+==========================================
+DIRECTORY STRUCTURE
+==========================================
+[Dir] Scripts
+    [Dir] Grid
+        - CellVisualizer.cs
+        - GridInteractorExample.cs
+        - GridSystem.cs
+    [Dir] Inventory
+        - InventoryManager.cs
+        - InventoryUI.cs
+        - ItemData.cs
+    [Dir] PlacedItems
+        - PlacedItem.cs
+    - DebugLabel.cs
+    - GameInpurManager.cs
+    - RayVisualizer.cs
+    - SimpleObjectPlacer.cs
+    - StartItems.cs
+
+
+==========================================
+SCRIPT: DebugLabel.cs
+==========================================
+using UnityEngine;
+using TMPro;
+using System.Collections;
+
+public class DebugLabel : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private TextMeshPro _label;
+
+    [Header("Settings")]
+    [SerializeField] private Vector3 _offset = new Vector3(0f, 1.5f, 0f);
+    [SerializeField] private float _fontSize = 3f;
+    [SerializeField] private Color _textColor = Color.white;
+
+    [Header("Flash Settings")]
+    [SerializeField] private float _fadeInDuration = 0.2f;
+    [SerializeField] private float _fadeOutDuration = 0.4f;
+
+    private Camera _mainCamera;
+    private bool _isVisible;
+    private Coroutine _flashCoroutine;
+
+    private void Awake()
+    {
+        _mainCamera = Camera.main;
+
+        if (_label == null)
+            _label = CreateLabel();
+
+        SetVisible(false);
+    }
+
+    private void LateUpdate()
+    {
+        if (!_isVisible || _mainCamera == null) return;
+
+        _label.transform.forward = _mainCamera.transform.forward;
+        _label.transform.position = transform.position + _offset;
+    }
+
+    public void Debug(object value)
+    {
+        _label.text = value?.ToString() ?? "null";
+        SetVisible(true);
+    }
+
+    /// <summary>
+    /// Shows the label with a fade in, holds for stayDuration seconds, then fades out.
+    /// Interrupts any flash already in progress.
+    /// </summary>
+    public void Flash(object value, float stayDuration = 1f)
+    {
+        if (_flashCoroutine != null)
+            StopCoroutine(_flashCoroutine);
+
+        _label.text = value?.ToString() ?? "null";
+        _flashCoroutine = StartCoroutine(FlashRoutine(stayDuration));
+    }
+
+    public void ClearDebug()
+    {
+        if (_flashCoroutine != null)
+        {
+            StopCoroutine(_flashCoroutine);
+            _flashCoroutine = null;
+        }
+
+        SetVisible(false);
+        _label.text = string.Empty;
+    }
+
+    private IEnumerator FlashRoutine(float stayDuration)
+    {
+        // Fade in
+        SetVisible(true);
+        yield return FadeRoutine(0f, 1f, _fadeInDuration);
+
+        // Stay
+        yield return new WaitForSeconds(stayDuration);
+
+        // Fade out
+        yield return FadeRoutine(1f, 0f, _fadeOutDuration);
+
+        SetVisible(false);
+        _flashCoroutine = null;
+    }
+
+    private IEnumerator FadeRoutine(float from, float to, float duration)
+    {
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float alpha = Mathf.Lerp(from, to, elapsed / duration);
+            _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, alpha);
+            yield return null;
+        }
+
+        _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, to);
+    }
+
+    private void SetVisible(bool visible)
+    {
+        _isVisible = visible;
+        _label.gameObject.SetActive(visible);
+    }
+
+    private TextMeshPro CreateLabel()
+    {
+        var labelGO = new GameObject("DebugLabel");
+        labelGO.transform.SetParent(transform);
+        labelGO.transform.localPosition = _offset;
+
+        var tmp = labelGO.AddComponent<TextMeshPro>();
+        tmp.fontSize = _fontSize;
+        tmp.color = _textColor;
+        tmp.alignment = TextAlignmentOptions.Center;
+
+        return tmp;
+    }
+}
+
+
+==========================================
+SCRIPT: GameInpurManager.cs
+==========================================
+using UnityEngine;
+
+public class GameInpurManager : MonoBehaviour
+{
+    [SerializeField] private GridSystem gridSystem;
+    [SerializeField] private InventoryManager inventoryManager;
+    [SerializeField] private SimpleObjectPlacer objectPlacer;
+
+    void Update()
+    {
+        InventoryInput();
+
+        PlaceObjectsInput();
+    }
+
+    private void InventoryInput()
+    {
+        for (int i = 1; i <= 9; i++)
+        {
+            if (Input.GetKeyDown(KeyCode.Alpha0 + i))
+            {
+                inventoryManager.ChangeCurrentSelectedSlot(i - 1);
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.Alpha0))
+        {
+            inventoryManager.ChangeCurrentSelectedSlot(9);
+        }
+    }
+
+    private void PlaceObjectsInput()
+    {
+        if (Input.GetMouseButtonDown(0))
+        {
+            objectPlacer.PlaceObjectInCell();
+        }
+        else if (Input.GetMouseButtonDown(1))
+        {
+            objectPlacer.RemoveObjectFromCell();
+        }
+    }
+}
+
+
+
+==========================================
+SCRIPT: RayVisualizer.cs
+==========================================
+using UnityEngine;
+
+public class RayVisualizer : MonoBehaviour
+{
+    private Camera playerCamera;
+
+    public float maxRayDistance = 5f;
+
+    public GameObject hitObjectPrefab;
+
+    private GameObject hitObject;
+
+
+
+    private void Start()
+    {
+        if (playerCamera == null)
+        {
+            playerCamera = Camera.main;
+        }
+        
+        if (hitObjectPrefab != null)
+        {
+            hitObject = Instantiate(hitObjectPrefab, Vector3.zero, Quaternion.identity);
+            hitObject.SetActive(false);
+        }
+        else
+        {
+            Debug.LogWarning("RayVisualizer: Prefab para visualização de hit não está atribuído!");
+        }
+    }
+
+    private void Update()
+    {
+        PerformRay();
+    }
+
+    private void PerformRay()
+    {
+        // Proteção contra referências nulas
+        if (playerCamera == null)
+        {
+            Debug.LogWarning("RayVisualizer: Câmera não está referenciada!");
+            return;
+        }
+
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
+
+        if (Physics.Raycast(ray, out hit, maxRayDistance))
+        {
+            hitObject.SetActive(true);
+            hitObject.transform.position = hit.point;
+        }
+        else
+        {
+            hitObject.SetActive(false);
+        }
+        
+    }
+}
+
+
+
+==========================================
+SCRIPT: SimpleObjectPlacer.cs
+==========================================
+using UnityEngine;
+
+public class SimpleObjectPlacer : MonoBehaviour
+{
+    private Camera playerCamera;
+    [SerializeField] private float maxRayDistance = 5f;
+    [SerializeField] private GridSystem gridSystem;
+    [SerializeField] private InventoryManager inventoryManager;
+    [SerializeField] private LayerMask placedObjectLayer;
+
+    private int _placedLayerIndex;       // layer index  (e.g. 8)
+    private int _placedLayerMask;        // bitmask      (e.g. 1 << 8 = 256)
+
+    private const float HIT_BIAS = 0.001f;
+
+    private void Start()
+    {
+        if (gridSystem == null) Debug.LogWarning("SimpleObjectPlacer: GridSystem não está referenciado!");
+        if (playerCamera == null) playerCamera = Camera.main;
+
+        // Resolve once here — used everywhere else
+        _placedLayerIndex = LayerMaskToIndex(placedObjectLayer);
+        _placedLayerMask  = 1 << _placedLayerIndex;
+    }
+
+    private Vector3Int? GetGridIndexAtPosition()
+    {
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
+        {
+            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
+            return gridSystem.WorldToGridPosition(adjustedPoint);
+        }
+        return null;
+    }
+
+    public Vector3Int? GetCellFromPlacedItem()
+    {
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        Debug.DrawRay(ray.origin, ray.direction * maxRayDistance, Color.red, 2f);
+
+        // Uses the pre-built bitmask — guaranteed to match what was assigned
+        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
+        {
+            PlacedItem placedItem = hit.collider.GetComponentInParent<PlacedItem>();
+
+            if (placedItem != null)
+            {
+                // Use the object's own position, not the ray surface contact point
+                return gridSystem.WorldToGridPosition(placedItem.transform.position);
+            }
+
+            Debug.LogWarning("O objeto atingido não possui o componente PlacedItem.");
+        }
+
+        return null;
+    }
+
+    public void PlaceObjectInCell()
+    {
+        // 1. Validação inicial: se não houver posição, saímos logo
+        if (!(GetGridIndexAtPosition() is Vector3Int gridIndex))
+        {
+            //Debug.Log("Nenhuma célula válida selecionada.");
+            return;
+        }
+
+        // 2. Validação de estado: se estiver ocupado, saímos logo
+        if (gridSystem.IsCellOccupied(gridIndex))
+        {
+            //Debug.Log($"A célula {gridIndex} já está ocupada!");
+            return;
+        }
+
+        // 3. Rota principal: o código que "faz o trabalho" fica sem indentação profunda
+        Vector3 cellCenter = gridSystem.GridToWorldPosition(gridIndex);
+        Vector3 placementPos = new Vector3(
+            cellCenter.x,
+            cellCenter.y - (gridSystem.cellSize / 2f),
+            cellCenter.z
+        );
+
+        ItemData selectedItem = inventoryManager.GetSelectedItem();
+        if (selectedItem == null)
+        {
+            //Debug.Log("Nenhum item selecionado para colocar.");
+            return;
+        }
+
+        GameObject newObj = Instantiate(selectedItem.itemPrefab, placementPos, Quaternion.identity);
+        PlacedItem newObjItem = newObj.AddComponent<PlacedItem>();
+        newObjItem.SetItemData(selectedItem);
+        SetLayerRecursively(newObj, _placedLayerIndex);
+
+        gridSystem.PlaceObjectInCell(gridIndex, newObj);
+    }
+
+    public void RemoveObjectFromCell()
+    {
+        if(!(GetCellFromPlacedItem() is Vector3Int gridIndex))
+        {
+            //Debug.Log("Nenhuma célula válida selecionada para remoção.");
+            return;
+        }
+        gridSystem.RemoveObjectFromCell(gridIndex);
+    }
+
+    private void SetLayerRecursively(GameObject obj, int layer)
+    {
+        foreach (Transform t in obj.GetComponentsInChildren<Transform>(true))
+            t.gameObject.layer = layer;
+    }
+
+    private int LayerMaskToIndex(LayerMask mask)
+    {
+        if (mask.value == 0)
+        {
+            Debug.LogWarning("SimpleObjectPlacer: placedObjectLayer não está configurado! Usando layer 0.");
+            return 0;
+        }
+
+        int value = mask.value;
+        int index = 0;
+        while ((value & 1) == 0) { value >>= 1; index++; }
+        return index;
+    }
+}
+
+
+==========================================
+SCRIPT: StartItems.cs
+==========================================
+using UnityEngine;
+
+public class StartItems : MonoBehaviour
+{
+    [SerializeField] private InventoryManager inventoryManager;
+
+    [SerializeField] private ItemData[] startingItems;
+
+    private void Start()
+    {
+        foreach (var item in startingItems)
+        {
+            inventoryManager.TryAddItem(item, item.maxStackAmount);
+            
+        }
+    }
+}
+
+
+
+==========================================
+SCRIPT: CellVisualizer.cs
+==========================================
+using UnityEngine;
+
+public class CellVisualizer : MonoBehaviour
+{
+    private Camera playerCamera;
+    public float maxRayDistance = 5f;
+    public GameObject cellUIPrefab;
+    public GridSystem gridSystem;
+    private GameObject cellUIInstance;
+
+    // Ajuste para evitar Z-Fighting
+    private const float Z_FIGHTING_OFFSET = 0.01f;
+    
+    // Pequeno offset para corrigir a precisão do Raycast
+    private const float HIT_BIAS = 0.001f;
+
+    private void Start()
+    {
+        if (gridSystem == null) Debug.LogWarning("CellVisualizer: GridSystem não está referenciado!");
+        if (playerCamera == null) playerCamera = Camera.main;
+        
+        if (cellUIPrefab != null)
+        {
+            cellUIInstance = Instantiate(cellUIPrefab, Vector3.zero, Quaternion.Euler(90, 0, 0));
+            cellUIInstance.SetActive(false);
+        }
+    }
+
+    private void Update()
+    {
+        PerformRay();
+    }
+
+    private void PerformRay()
+    {
+        if (playerCamera == null || gridSystem == null) return;
+
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+
+        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
+        {
+            // APLICAÇÃO DO NUDGE:
+            // Ajustamos o ponto de cálculo para fora da superfície usando a normal
+            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
+
+            Vector3Int gridIndex = gridSystem.WorldToGridPosition(adjustedPoint);
+            Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
+
+            // Ajuste para a base (baseado na metade do tamanho)
+            float halfCellSize = gridSystem.cellSize / 2f;
+            float baseFloorY = cellCenterWorldPosition.y - halfCellSize;
+
+            cellUIInstance.SetActive(true);
+            cellUIInstance.transform.position = new Vector3(
+                cellCenterWorldPosition.x,
+                baseFloorY + Z_FIGHTING_OFFSET,
+                cellCenterWorldPosition.z
+            );
+        }
+        else
+        {
+            if (cellUIInstance != null) cellUIInstance.SetActive(false);
+        }
+    }
+}
+
+
+==========================================
+SCRIPT: GridInteractorExample.cs
+==========================================
+using UnityEngine;
+
+public class GridInteractor : MonoBehaviour
+{
+    [Header("Referências")]
+    [Tooltip("Arraste o objeto que contém o script GridSystem aqui.")]
+    public GridSystem gridSystem;
+    
+    [Tooltip("A câmera usada para atirar o raio. Geralmente a Main Camera.")]
+    public Camera playerCamera;
+
+    [Header("Configurações de Interação")]
+    [Tooltip("Distância máxima que o raio alcançará em metros.")]
+    public float maxInteractDistance = 5f;
+    
+    [Tooltip("Quais camadas (Layers) o raio pode atingir?")]
+    public LayerMask interactableLayer = Physics.DefaultRaycastLayers;
+
+    void Update()
+    {
+        // Verifica se o botão esquerdo do mouse foi clicado
+        if (Input.GetMouseButtonDown(0))
+        {
+            //PerformGridRaycast();
+        }
+    }
+
+    private void PerformGridRaycast()
+    {
+        // Proteção contra referências nulas
+        if (playerCamera == null || gridSystem == null)
+        {
+            Debug.LogWarning("GridInteractor: Câmera ou GridSystem não estão referenciados!");
+            return;
+        }
+
+        // Cria um raio que sai da câmera na direção do ponteiro do mouse
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
+
+        // Atira o raio com o limite de distância especificado
+        if (Physics.Raycast(ray, out hit, maxInteractDistance, interactableLayer))
+        {
+            // 1. Aplica a Tolerância de Ponto Flutuante (Epsilon)
+            Vector3 placementPosition = hit.point + (hit.normal * 0.01f);
+
+            // 2. Converte o ponto exato do mundo para o índice discreto do Grid
+            Vector3Int gridIndex = gridSystem.WorldToGridPosition(placementPosition);
+
+            // 3. (Opcional) Pega o centro exato da célula para instanciar algo depois
+            // Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
+
+            // Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}. Centro Mundial: {cellCenterWorldPosition}");
+            Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}");
+            // Aqui você chamará o gridSystem.GetOrCreateCell() futuramente para salvar dados.
+        }
+    }
+}
+
+
+==========================================
+SCRIPT: GridSystem.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+public class GridCell
+{
+    public Vector3Int GridPosition;
+    public bool IsOccupied;
+    public GameObject OccupyingObject; 
+
+    public void Occupy(GameObject obj)
+    {
+        OccupyingObject = obj;
+        IsOccupied = true;
+    }
+
+    public void Clear()
+    {    
+        GameObject.Destroy(OccupyingObject);
+        OccupyingObject = null;
+        IsOccupied = false;
+    }
+}
+
+public class GridSystem : MonoBehaviour
+{
+    [Header("Configurações Básicas")]
+    public float cellSize = 1f;
+    public Vector3 gridOffset = Vector3.zero;
+    
+    [Header("Configurações de Alinhamento")]
+    public bool snapToCenter = true; // Se true, alinha ao centro. Se false, alinha ao canto (0,0,0).
+
+    [Header("Visualização (Gizmos)")]
+    public bool showGizmos = true;
+    public int visualRange = 5;
+
+    private Dictionary<Vector3Int, GridCell> gridMap = new Dictionary<Vector3Int, GridCell>();
+
+    public Vector3Int WorldToGridPosition(Vector3 worldPosition)
+    {
+        int x = Mathf.FloorToInt((worldPosition.x - gridOffset.x) / cellSize);
+        int y = Mathf.FloorToInt((worldPosition.y - gridOffset.y) / cellSize);
+        int z = Mathf.FloorToInt((worldPosition.z - gridOffset.z) / cellSize);
+        
+        return new Vector3Int(x, y, z);
+    }
+
+    public Vector3 GridToWorldPosition(Vector3Int gridPosition)
+    {
+        // Se snapToCenter for true, adicionamos metade da célula para centralizar.
+        float offset = snapToCenter ? (cellSize / 2f) : 0f;
+
+        return new Vector3(
+            (gridPosition.x * cellSize) + offset,
+            (gridPosition.y * cellSize) + offset,
+            (gridPosition.z * cellSize) + offset
+        ) + gridOffset;
+    }
+
+    public GridCell GetOrCreateCell(Vector3 worldPosition)
+    {
+        Vector3Int gridPos = WorldToGridPosition(worldPosition);
+
+        if (!gridMap.ContainsKey(gridPos))
+        {
+            gridMap[gridPos] = new GridCell { GridPosition = gridPos, IsOccupied = false };
+        }
+
+        return gridMap[gridPos];
+    }
+
+    // Nova função para verificar disponibilidade
+    public bool IsCellOccupied(Vector3Int gridPos)
+    {
+        if (gridMap.TryGetValue(gridPos, out GridCell cell))
+        {
+            return cell.IsOccupied;
+        }
+        return false;
+    }
+
+    public void PlaceObjectInCell(Vector3Int gridPos, GameObject obj)
+    {
+        GridCell cell = GetOrCreateCell(GridToWorldPosition(gridPos));
+        cell.Occupy(obj);
+    }
+
+    public void RemoveObjectFromCell(Vector3Int gridPos)
+    {
+        if (gridMap.TryGetValue(gridPos, out GridCell cell))
+        {
+            cell.Clear();
+        }
+    }
+
+    //Other testing methods (not used in main logic, but can be useful for debugging)
+    public List<Vector3Int> GetRandomGridPositionsInTheWorld(int count)
+    {
+        List<Vector3Int> positions = new List<Vector3Int>();
+
+        for (int i = 0; i < count; i++)
+        {
+            int x = Random.Range(-visualRange, visualRange + 1);
+            int y = Random.Range(-visualRange, visualRange + 1);
+            int z = Random.Range(-visualRange, visualRange + 1);
+            positions.Add(new Vector3Int(x, y, z));
+        }
+
+        return positions;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!showGizmos) return;
+
+        Gizmos.color = new Color(0.2f, 0.8f, 0.2f, 0.3f);
+
+        for (int x = -visualRange; x <= visualRange; x++)
+        {
+            for (int y = -visualRange; y <= visualRange; y++)
+            {
+                for (int z = -visualRange; z <= visualRange; z++)
+                {
+                    Vector3Int posIndex = new Vector3Int(x, y, z);
+                    Vector3 worldCenter = GridToWorldPosition(posIndex);
+                    
+                    // Se não estiver centralizado, o centro do Gizmo deve ser ajustado para visualizar corretamente
+                    Vector3 drawPos = snapToCenter ? worldCenter : worldCenter + (Vector3.one * (cellSize / 2f));
+                    
+                    Gizmos.DrawWireCube(drawPos, Vector3.one * cellSize);
+                }
+            }
+        }
+    }
+}
+
+
+==========================================
+SCRIPT: InventoryManager.cs
+==========================================
+using System.Collections.Generic;
+using System.ComponentModel;
+using UnityEngine;
+
+[System.Serializable]
+public class InventorySlot
+{
+    public ItemStack itemStack;
+    public int slotID;
+}
+
+public class InventoryManager : MonoBehaviour
+{
+    [SerializeField] private InventoryUI inventoryUI;
+    [SerializeField] private int inventorySize = 10;
+    private int currentSelectedSlot = 0;
+    [SerializeField] private ItemData selectedItem;
+    private List<InventorySlot> slots;
+    
+
+    private void Awake()
+    {
+        InitializeInventoryBar();
+    }
+
+    public void InitializeInventoryBar()
+    {
+        slots = new List<InventorySlot>();
+
+        for (int i = 0; i < inventorySize; i++)
+        {
+            slots.Add(new InventorySlot { slotID = i, itemStack = null });
+            inventoryUI.CreateBarSlotUI(i, null);
+        }
+
+        SelectSlot(currentSelectedSlot);
+        // Pass -1 as old slot since there's nothing to deselect yet
+        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, -1);
+
+        Debug.Log($"Inventário inicializado com {slots.Count} slots.");
+    }
+
+    public void ChangeCurrentSelectedSlot(int value)
+    {
+        int oldSelectedSlotID = currentSelectedSlot;
+        currentSelectedSlot = Mathf.Clamp(value, 0, slots.Count - 1);
+
+        if (currentSelectedSlot == oldSelectedSlotID) return;
+
+        SelectSlot(currentSelectedSlot);
+        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, oldSelectedSlotID);
+    }
+
+    // Handles data update only — UI highlight is handled by the caller
+    private void SelectSlot(int slotIndex)
+    {
+        selectedItem = slots[slotIndex].itemStack?.itemData;
+
+        Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
+    }
+
+    public bool TryAddItem(ItemData item, int amount)
+    {
+        int slotIndex = FindAvailableSlotOfType(item);
+    
+        if (slotIndex == -1)
+        {
+            Debug.Log("Inventário cheio!");
+            return false;
+        }
+
+        InventorySlot targetSlot = slots[slotIndex];
+
+        if (targetSlot.itemStack == null)
+        {
+            // Cria um novo stack no slot vazio
+            targetSlot.itemStack = new ItemStack(item, amount);
+        }
+        else
+        {
+            // Aumenta a quantidade do item existente
+            targetSlot.itemStack.amount += amount;
+        }
+    
+        // NOVO: Avisa a UI para atualizar o desenho do slot na tela
+        inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
+
+        Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
+        return true;
+    }
+
+    private int FindAvailableSlotOfType(ItemData item)
+    {
+        foreach (var slot in slots)
+        {
+            var stack = slot.itemStack;
+            bool canStack = stack != null && 
+                            stack.itemData == item && 
+                            stack.amount < item.maxStackAmount;
+
+            if (canStack) return slot.slotID;
+        }
+
+        foreach (var slot in slots)
+        {
+            if (slot.itemStack == null) return slot.slotID;
+        }
+
+        return -1; 
+    }
+
+    public ItemData GetSelectedItem()
+    {
+        return selectedItem;
+    }
+}
+
+
+
+==========================================
+SCRIPT: InventoryUI.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class InventoryUI : MonoBehaviour
+{
+    [SerializeField] private GameObject InventoryBarUI;
+    [SerializeField] private GameObject slotUIPrefab;
+    [SerializeField] private Transform slotsParent;
+
+    [Header("Sprites de Fundo")]
+    [SerializeField] private Sprite defaultSlotSprite; // Sprite para o fundo normal do slot
+    [SerializeField] private Sprite selectedSlotSprite; // Sprite para o fundo do slot selecionado
+    
+    // Lista para guardar os GameObjects dos slots que aparecem na tela
+    private List<GameObject> slotUIObjects = new List<GameObject>();
+    
+    private void Awake()
+    {
+        InventoryBarUI.SetActive(true);
+    }
+
+    public void CreateBarSlotUI(int slotID, ItemStack itemStack)
+    {
+        if (slotUIObjects.Count >= 10)
+        {
+            Debug.LogWarning($"Não é possível criar mais de 10 slots. SlotID {slotID} não criado.");
+            return;
+        }
+
+        GameObject slotUIObj = Instantiate(slotUIPrefab, slotsParent);
+        slotUIObj.name = $"Slot_{slotID}";
+        
+        // Garante que o slot recém-criado começa com o sprite padrão
+        if (slotUIObj.TryGetComponent<Image>(out Image slotBackground))
+        {
+            slotBackground.sprite = defaultSlotSprite;
+        }
+
+        slotUIObjects.Add(slotUIObj);
+
+        UpdateSlotUI(slotID, itemStack);
+    }
+
+    // Método para atualizar o ícone do item (continua igual)
+    public void UpdateSlotUI(int slotID, ItemStack itemStack)
+    {
+        if (slotID < 0 || slotID >= slotUIObjects.Count) return;
+
+        GameObject slotUIObj = slotUIObjects[slotID];
+        Image iconImage = slotUIObj.transform.GetChild(0).GetComponent<Image>();
+
+        if (itemStack == null || itemStack.itemData == null)
+        {
+            iconImage.sprite = null;
+            iconImage.gameObject.SetActive(false);
+        }
+        else
+        {
+            iconImage.sprite = itemStack.itemData.icon;
+            iconImage.gameObject.SetActive(true);
+        }
+    }
+
+    /// <summary>
+    /// Atualiza o sprite de fundo do novo slot selecionado e do slot que foi desmarcado.
+    /// </summary>
+    public void UpdateSelectionVisual(int newSelectedSlotID, int oldSelectedSlotID)
+    {
+        // 1. Desativa o destaque do slot antigo (segurança de índice)
+        if (oldSelectedSlotID >= 0 && oldSelectedSlotID < slotUIObjects.Count)
+        {
+            GameObject oldSlot = slotUIObjects[oldSelectedSlotID];
+            if (oldSlot.TryGetComponent<Image>(out Image oldBackground))
+            {
+                oldBackground.sprite = defaultSlotSprite;
+            }
+        }
+
+        // 2. Ativa o destaque do novo slot selecionado (segurança de índice)
+        if (newSelectedSlotID >= 0 && newSelectedSlotID < slotUIObjects.Count)
+        {
+            GameObject newSlot = slotUIObjects[newSelectedSlotID];
+            if (newSlot.TryGetComponent<Image>(out Image newBackground))
+            {
+                newBackground.sprite = selectedSlotSprite;
+            }
+        }
+    }
+
+    public void ToggleInventoryBar(bool value)
+    {
+        InventoryBarUI.SetActive(value);
+    }
+}
+
+
+==========================================
+SCRIPT: ItemData.cs
+==========================================
+using UnityEngine;
+
+[CreateAssetMenu(fileName = "ItemData", menuName = "Inventory/ItemData")]
+public class ItemData : ScriptableObject
+{
+    public string id; // ID único para salvar/carregar
+    public string itemName;
+
+    public Sprite icon;
+
+    public int maxStackAmount = 64; // Quantidade máxima por stack
+    public GameObject itemPrefab; // O modelo 3D para construir
+    public bool isPlaceable;
+    public bool isUsable;
+}
+
+[System.Serializable]
+public class ItemStack
+{
+    public ItemData itemData;
+    public int amount;
+
+    public ItemStack(ItemData data, int initialAmount)
+    {
+        itemData = data;
+        amount = initialAmount;
+    }
+}
+
+
+==========================================
+SCRIPT: PlacedItem.cs
+==========================================
+using UnityEngine;
+
+public class PlacedItem : MonoBehaviour
+{
+    [SerializeField] private ItemData itemData;
+
+    private DebugLabel debugLabel;
+
+    private void Awake()
+    {
+        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
+    }
+
+    private void Start()
+    {
+        if (itemData == null)
+        {
+            Debug.LogError("PlacedItem: This Placed item has no ItemData reference assigned, assign one when placing an item.");
+        }
+
+        PerformSimpleDebug();
+    }
+
+    public void SetItemData(ItemData data)
+    {
+        itemData = data;
+        debugLabel.Debug($"Placed: {itemData.itemName}");
+    }
+
+    private void PerformSimpleDebug()
+    {
+        debugLabel.Flash($"Item: {itemData.itemName}");
+    }
+}
+
+
+

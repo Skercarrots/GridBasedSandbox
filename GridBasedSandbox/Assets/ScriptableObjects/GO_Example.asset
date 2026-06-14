@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 95d9f70848a31404f81c518f775d722b, type: 3}
+  m_Name: GO_Example
+  m_EditorClassIdentifier: Assembly-CSharp::PlacedObjectData
+  id: 0
+  itemName: GO_Example
+  icon: {fileID: 820854672, guid: b75d215501f9ccf43820a7e9d3c1375e, type: 3}
+  maxStackAmount: 64
+  itemPrefab: {fileID: 7776123483932913170, guid: a62f2a73f35fae444b4d09e0f23c4826, type: 3}
+  isPlaceable: 1
+  isUsable: 0
