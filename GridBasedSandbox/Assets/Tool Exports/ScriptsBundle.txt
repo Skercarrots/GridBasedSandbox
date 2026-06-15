@@ -6,17 +6,24 @@ DIRECTORY STRUCTURE
         - CellVisualizer.cs
         - GridInteractorExample.cs
         - GridSystem.cs
+    [Dir] Interactables
+        - Button.cs
+        - IInteractable.cs
     [Dir] Inventory
+        - DefaultLoadoutSource.cs
+        - IItemGrantSource.cs
         - InventoryManager.cs
+        - InventorySaveService.cs
         - InventoryUI.cs
         - ItemData.cs
+        - LevelGrantSource.cs
+        - PlayerInventoryLoader.cs
     [Dir] PlacedItems
         - PlacedItem.cs
     - DebugLabel.cs
     - GameInpurManager.cs
     - RayVisualizer.cs
     - SimpleObjectPlacer.cs
-    - StartItems.cs
 
 
 ==========================================
@@ -184,13 +191,40 @@ public class GameInpurManager : MonoBehaviour
     {
         if (Input.GetMouseButtonDown(0))
         {
-            objectPlacer.PlaceObjectInCell();
+            
+            objectPlacer.RemoveObjectFromCell();
         }
         else if (Input.GetMouseButtonDown(1))
         {
-            objectPlacer.RemoveObjectFromCell();
+            // Try interaction first, fall back to removal
+            if (TryInteract())
+            {
+                Debug.Log("Interacted with object under cursor.");
+                return;
+            }
+            // Only place if hands are NOT empty — check inventory
+            if (inventoryManager.GetSelectedItem() != null)
+                objectPlacer.PlaceObjectInCell();
+                
         }
     }
+
+    private bool TryInteract()
+    {
+        if (!HasEmptyHands()) return false;
+        
+        PlacedItem item = objectPlacer.GetPlacedItemUnderCursor();
+        if (item == null) return false;
+
+        IInteractable interactable = item.GetInteractable();
+        if (interactable == null) return false;
+
+        interactable.Interact();
+        return true;
+    }
+
+
+    private bool HasEmptyHands() => inventoryManager.GetSelectedItem() == null;
 }
 
 
@@ -391,30 +425,15 @@ public class SimpleObjectPlacer : MonoBehaviour
         while ((value & 1) == 0) { value >>= 1; index++; }
         return index;
     }
-}
 
-
-==========================================
-SCRIPT: StartItems.cs
-==========================================
-using UnityEngine;
-
-public class StartItems : MonoBehaviour
-{
-    [SerializeField] private InventoryManager inventoryManager;
-
-    [SerializeField] private ItemData[] startingItems;
-
-    private void Start()
+    public PlacedItem GetPlacedItemUnderCursor()
     {
-        foreach (var item in startingItems)
-        {
-            inventoryManager.TryAddItem(item, item.maxStackAmount);
-            
-        }
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
+            return hit.collider.GetComponentInParent<PlacedItem>();
+        return null;
     }
 }
-
 
 
 ==========================================
@@ -691,6 +710,115 @@ public class GridSystem : MonoBehaviour
 
 
 ==========================================
+SCRIPT: Button.cs
+==========================================
+using UnityEngine;
+
+public class Button : MonoBehaviour, IInteractable
+{
+    private DebugLabel debugLabel;
+
+    private void Start()
+    {
+        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
+    }
+
+    public string GetInteractionLabel()
+    {
+        return "Press Button";
+    }
+
+    public void Interact()
+    {
+        debugLabel.Flash("Boop!");
+    }
+}
+
+
+
+==========================================
+SCRIPT: IInteractable.cs
+==========================================
+using UnityEngine;
+
+public interface IInteractable
+{
+    string GetInteractionLabel(); // "Open Chest", "Use Furnace", etc.
+    void Interact();
+}
+
+/*
+How specific behaviours implement it independently:
+
+//ChestInteraction.cs
+public class ChestInteraction : MonoBehaviour, IInteractable
+{
+    public string GetInteractionLabel() => "Open Chest";
+    public void Interact() { // open chest UI // }
+}
+
+// FurnaceInteraction.cs
+public class FurnaceInteraction : MonoBehaviour, IInteractable
+{
+    public string GetInteractionLabel() => "Use Furnace";
+    public void Interact() { // open smelting UI // }
+}
+*/
+
+
+/*
+Distinguishing Interactable vs Non-Interactable items
+
+// PlacedItem.cs — add this
+public bool IsInteractable => GetComponent<IInteractable>() != null;
+public IInteractable GetInteractable() => GetComponent<IInteractable>();
+
+The Minecraft way — the chest prefab already has ChestInteraction on it.
+No runtime AddComponent juggling. The itemPrefab in ItemData simply has
+the right components baked in.
+
+*/
+
+
+==========================================
+SCRIPT: DefaultLoadoutSource.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+[CreateAssetMenu(fileName = "DefaultLoadout", menuName = "Inventory/Default Loadout Source")]
+public class DefaultLoadoutSource : ScriptableObject, IItemGrantSource
+{
+    [SerializeField] private List<ItemGrant> defaultItems;
+
+    public int Priority => 100; // Lowest priority — fallback only
+    public bool IsAvailable() => defaultItems != null && defaultItems.Count > 0;
+    public IEnumerable<ItemGrant> GetItemGrants() => defaultItems;
+}
+
+
+==========================================
+SCRIPT: IItemGrantSource.cs
+==========================================
+using System.Collections.Generic;
+
+public interface IItemGrantSource
+{
+    // Lower number = higher priority (save data should be 0, defaults last)
+    int Priority { get; }
+    bool IsAvailable();
+    IEnumerable<ItemGrant> GetItemGrants();
+}
+
+[System.Serializable]
+public struct ItemGrant
+{
+    public ItemData item;
+    public int amount;
+}
+
+
+==========================================
 SCRIPT: InventoryManager.cs
 ==========================================
 using System.Collections.Generic;
@@ -712,12 +840,6 @@ public class InventoryManager : MonoBehaviour
     [SerializeField] private ItemData selectedItem;
     private List<InventorySlot> slots;
     
-
-    private void Awake()
-    {
-        InitializeInventoryBar();
-    }
-
     public void InitializeInventoryBar()
     {
         slots = new List<InventorySlot>();
@@ -751,7 +873,7 @@ public class InventoryManager : MonoBehaviour
     {
         selectedItem = slots[slotIndex].itemStack?.itemData;
 
-        Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
+        //Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
     }
 
     public bool TryAddItem(ItemData item, int amount)
@@ -780,7 +902,7 @@ public class InventoryManager : MonoBehaviour
         // NOVO: Avisa a UI para atualizar o desenho do slot na tela
         inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
 
-        Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
+        //Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
         return true;
     }
 
@@ -808,8 +930,57 @@ public class InventoryManager : MonoBehaviour
     {
         return selectedItem;
     }
+
+    public void RefreshSelectedSlot()
+    {
+        SelectSlot(currentSelectedSlot);
+    }
+
+    public List<InventorySlot> GetSlots() => slots;
+    
 }
 
+
+
+==========================================
+SCRIPT: InventorySaveService.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+public class InventorySaveService : MonoBehaviour, IItemGrantSource
+{
+    private const string SaveKey = "inventory_save";
+
+    public int Priority => 0; // Highest priority — save data wins
+    public bool IsAvailable() => PlayerPrefs.HasKey(SaveKey);
+
+    public IEnumerable<ItemGrant> GetItemGrants()
+    {
+        string json = PlayerPrefs.GetString(SaveKey);
+        var saveData = JsonUtility.FromJson<InventorySaveData>(json);
+        return saveData?.grants ?? new List<ItemGrant>();
+    }
+
+    public void Save(List<InventorySlot> slots)
+    {
+        var grants = new List<ItemGrant>();
+        foreach (var slot in slots)
+        {
+            if (slot.itemStack != null)
+                grants.Add(new ItemGrant { item = slot.itemStack.itemData, amount = slot.itemStack.amount });
+        }
+
+        string json = JsonUtility.ToJson(new InventorySaveData { grants = grants });
+        PlayerPrefs.SetString(SaveKey, json);
+        PlayerPrefs.Save();
+    }
+
+    public void ClearSave() => PlayerPrefs.DeleteKey(SaveKey);
+
+    [System.Serializable]
+    private class InventorySaveData { public List<ItemGrant> grants; }
+}
 
 
 ==========================================
@@ -946,6 +1117,102 @@ public class ItemStack
 
 
 ==========================================
+SCRIPT: LevelGrantSource.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+public class LevelGrantSource : MonoBehaviour, IItemGrantSource
+{
+    [SerializeField] private List<ItemGrant> levelStartItems;
+
+    public int Priority => 50;
+    public bool IsAvailable() => levelStartItems != null && levelStartItems.Count > 0;
+    public IEnumerable<ItemGrant> GetItemGrants() => levelStartItems;
+}
+
+
+==========================================
+SCRIPT: PlayerInventoryLoader.cs
+==========================================
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+
+public class PlayerInventoryLoader : MonoBehaviour
+{
+    [Header("Core")]
+    [SerializeField] private InventoryManager inventoryManager;
+    [SerializeField] private DefaultLoadoutSource defaultLoadout;
+
+    [Header("Optional Sources (auto-discovered if null)")]
+    [SerializeField] private InventorySaveService saveService;
+    [SerializeField] private LevelGrantSource levelGrants;
+
+    private void Awake()
+    {
+        // Inventory initializes here as before
+        inventoryManager.InitializeInventoryBar();
+    }
+
+    private void Start()
+    {
+        // All granting happens here, after Awake — execution order is now explicit
+        LoadInventory();
+    }
+
+    private void LoadInventory()
+    {
+        var sources = GatherSources();
+        var chosen = PickSource(sources);
+
+        if (chosen == null)
+        {
+            Debug.LogWarning("No item grant source available. Inventory will be empty.");
+            return;
+        }
+
+        foreach (var grant in chosen.GetItemGrants())
+            inventoryManager.TryAddItem(grant.item, grant.amount);
+
+        inventoryManager.RefreshSelectedSlot();
+        
+        Debug.Log($"Inventory loaded from: {chosen.GetType().Name}");
+    }
+
+    private List<IItemGrantSource> GatherSources()
+    {
+        var sources = new List<IItemGrantSource>();
+
+        // Auto-discover LevelGrantSource in scene if not assigned
+        if (levelGrants == null)
+            levelGrants = Object.FindAnyObjectByType<LevelGrantSource>();
+
+        if (saveService != null) sources.Add(saveService);
+        if (levelGrants != null) sources.Add(levelGrants);
+        if (defaultLoadout != null) sources.Add(defaultLoadout);
+
+        return sources;
+    }
+
+    // Pick the highest-priority available source
+    // To MERGE sources instead (e.g. save data + level grants), change this method
+    private IItemGrantSource PickSource(List<IItemGrantSource> sources)
+    {
+        return sources
+            .Where(s => s.IsAvailable())
+            .OrderBy(s => s.Priority)
+            .FirstOrDefault();
+    }
+
+    public void SaveInventory()
+    {
+        saveService?.Save(inventoryManager.GetSlots());
+    }
+}
+
+
+==========================================
 SCRIPT: PlacedItem.cs
 ==========================================
 using UnityEngine;
@@ -953,6 +1220,8 @@ using UnityEngine;
 public class PlacedItem : MonoBehaviour
 {
     [SerializeField] private ItemData itemData;
+    public bool IsInteractable => GetComponent<IInteractable>() != null;
+    
 
     private DebugLabel debugLabel;
 
@@ -981,6 +1250,8 @@ public class PlacedItem : MonoBehaviour
     {
         debugLabel.Flash($"Item: {itemData.itemName}");
     }
+
+    public IInteractable GetInteractable() => GetComponent<IInteractable>();
 }
 
 

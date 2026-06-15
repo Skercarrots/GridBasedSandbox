@@ -19,14 +19,11 @@ public class PlacedItem : MonoBehaviour
         {
             Debug.LogError("PlacedItem: This Placed item has no ItemData reference assigned, assign one when placing an item.");
         }
-
-        PerformSimpleDebug();
     }
 
     public void SetItemData(ItemData data)
     {
         itemData = data;
-        debugLabel.Debug($"Placed: {itemData.itemName}");
     }
 
     private void PerformSimpleDebug()

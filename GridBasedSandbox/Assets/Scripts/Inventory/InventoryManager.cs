@@ -17,12 +17,6 @@ public class InventoryManager : MonoBehaviour
     [SerializeField] private ItemData selectedItem;
     private List<InventorySlot> slots;
     
-
-    private void Awake()
-    {
-        InitializeInventoryBar();
-    }
-
     public void InitializeInventoryBar()
     {
         slots = new List<InventorySlot>();
@@ -85,7 +79,7 @@ public class InventoryManager : MonoBehaviour
         // NOVO: Avisa a UI para atualizar o desenho do slot na tela
         inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
 
-        Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
+        //Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
         return true;
     }
 
@@ -113,4 +107,12 @@ public class InventoryManager : MonoBehaviour
     {
         return selectedItem;
     }
+
+    public void RefreshSelectedSlot()
+    {
+        SelectSlot(currentSelectedSlot);
+    }
+
+    public List<InventorySlot> GetSlots() => slots;
+    
 }
