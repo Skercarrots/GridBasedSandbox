@@ -1,1257 +1,3069 @@
 ==========================================
 DIRECTORY STRUCTURE
 ==========================================
-[Dir] Scripts
-    [Dir] Grid
-        - CellVisualizer.cs
-        - GridInteractorExample.cs
-        - GridSystem.cs
-    [Dir] Interactables
-        - Button.cs
-        - IInteractable.cs
-    [Dir] Inventory
-        - DefaultLoadoutSource.cs
-        - IItemGrantSource.cs
-        - InventoryManager.cs
-        - InventorySaveService.cs
-        - InventoryUI.cs
-        - ItemData.cs
-        - LevelGrantSource.cs
-        - PlayerInventoryLoader.cs
-    [Dir] PlacedItems
-        - PlacedItem.cs
-    - DebugLabel.cs
-    - GameInpurManager.cs
-    - RayVisualizer.cs
-    - SimpleObjectPlacer.cs
+[Dir] Assets\Scripts\VoxelWorldSystem
+    - VoxelBlockPlacer.cs
+    - VoxelBlockRegistry.cs
+    - VoxelBlockType.cs
+    - VoxelChunk.cs
+    - VoxelChunkData.cs
+    - VoxelMeshBuilder.cs
+    - VoxelTerrainGenerator.cs
+    - VoxelWorldManager.cs
+    - VoxelWorldSettings.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration
+    - SETUP_GUIDE.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration\Core
+    - BaseGenerationPassAsset.cs
+    - BaseWorldGeneratorAsset.cs
+    - IGenerationPass.cs
+    - IWorldGenerator.cs
+    - VoxelWorldManagerExtended.cs
+    - WorldGenDebugOverlay.cs
+    - WorldGenNoiseUtils.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration\Dimensions
+    - DimensionProfile.cs
+    - DimensionRegistry.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration\Generators
+    - BackroomsGeneratorAsset.cs
+    - OverworldGeneratorAsset.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration\Passes
+    - BackroomsConnectorPassAsset.cs
+[Dir] Assets\Scripts\WorldGen_System_WIthDimensions\Scripts\WorldGeneration\Structures
+    - BackroomsLayout.cs
+    - BackroomsStructureConfig.cs
 
 
 ==========================================
-SCRIPT: DebugLabel.cs
+SCRIPT: VoxelBlockPlacer.cs
 ==========================================
 using UnityEngine;
-using TMPro;
-using System.Collections;
 
-public class DebugLabel : MonoBehaviour
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockPlacer  — Bridges player input with VoxelWorldManager.
+//
+//  DESIGN INTENT
+//  Your existing SimpleObjectPlacer/GridSystem are left UNTOUCHED.
+//  This script is a NEW, parallel placer that handles voxel blocks only.
+//  Both can coexist in the same scene; the inventory system is shared.
+//
+//  HOW IT WORKS
+//  1. On right-click: raycasts against chunk colliders, determines which
+//     block face was hit, selects the adjacent empty cell, and calls
+//     VoxelWorldManager.TrySetBlock() with the selected block id.
+//  2. On left-click: removes the hit block (sets to Air, id 0).
+//  3. Uses the same hit-bias trick as your original SimpleObjectPlacer to
+//     avoid floating-point edge hits registering on the wrong block.
+//
+//  BLOCK ID SOURCE
+//  ItemData can optionally carry a voxelBlockId field.
+//  If the selected inventory item has voxelBlockId > 0, it is used.
+//  This lets your existing inventory system drive block placement with
+//  zero changes to InventoryManager.cs.
+//
+//  ENABLING / DISABLING
+//  Call SetActive(true/false) from GameInputManager or toggle
+//  via the public IsActive property. When disabled, no raycasts are fired.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelBlockPlacer : MonoBehaviour
 {
     [Header("References")]
-    [SerializeField] private TextMeshPro _label;
+    [SerializeField] private VoxelWorldManager worldManager;
+    [SerializeField] private VoxelWorldSettings settings;
+    [SerializeField] private Camera playerCamera;
 
     [Header("Settings")]
-    [SerializeField] private Vector3 _offset = new Vector3(0f, 1.5f, 0f);
-    [SerializeField] private float _fontSize = 3f;
-    [SerializeField] private Color _textColor = Color.white;
+    [SerializeField] private float maxReach       = 6f;
+    [SerializeField] private LayerMask chunkLayer;
 
-    [Header("Flash Settings")]
-    [SerializeField] private float _fadeInDuration = 0.2f;
-    [SerializeField] private float _fadeOutDuration = 0.4f;
+    [Header("Default block to place (when no item selected)")]
+    [SerializeField] private byte defaultBlockId = 3; // e.g. Grass
 
-    private Camera _mainCamera;
-    private bool _isVisible;
-    private Coroutine _flashCoroutine;
+    // Small offset to push the sample point inside the face we hit
+    private const float HIT_BIAS = 0.001f;
 
-    private void Awake()
+    public bool IsActive { get; set; } = true;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Start()
     {
-        _mainCamera = Camera.main;
-
-        if (_label == null)
-            _label = CreateLabel();
-
-        SetVisible(false);
+        if (playerCamera == null) playerCamera = Camera.main;
     }
 
-    private void LateUpdate()
-    {
-        if (!_isVisible || _mainCamera == null) return;
+    // ── Public API (call from GameInputManager) ────────────────────────────────
 
-        _label.transform.forward = _mainCamera.transform.forward;
-        _label.transform.position = transform.position + _offset;
+    /// <summary>
+    /// Places a block in the cell ADJACENT to the hit face.
+    /// Pass the blockId to place (0 = Air = no-op for placement).
+    /// </summary>
+    public void PlaceBlock(byte blockId = 0)
+    {
+        if (!IsActive || worldManager == null) return;
+
+        if (!Raycast(out RaycastHit hit)) return;
+
+        // The placement position is one step OUTSIDE the hit block (along its normal)
+        Vector3 placePoint = hit.point + hit.normal * HIT_BIAS;
+        Vector3Int blockPos = WorldPointToBlockCoord(placePoint);
+
+        byte id = blockId > 0 ? blockId : defaultBlockId;
+        worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, id);
     }
 
-    public void Debug(object value)
+    /// <summary>Removes (sets to Air) the block that was directly hit.</summary>
+    public void RemoveBlock()
     {
-        _label.text = value?.ToString() ?? "null";
-        SetVisible(true);
+        if (!IsActive || worldManager == null) return;
+
+        if (!Raycast(out RaycastHit hit)) return;
+
+        // Remove the hit block — bias INWARD so we land inside the block
+        Vector3 removePoint = hit.point - hit.normal * HIT_BIAS;
+        Vector3Int blockPos = WorldPointToBlockCoord(removePoint);
+
+        worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, 0);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private bool Raycast(out RaycastHit hit)
+    {
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        return Physics.Raycast(ray, out hit, maxReach, chunkLayer);
     }
 
     /// <summary>
-    /// Shows the label with a fade in, holds for stayDuration seconds, then fades out.
-    /// Interrupts any flash already in progress.
+    /// Converts a world-space float point to integer block coordinates.
+    /// Uses FloorToInt for correct negative-coord handling.
     /// </summary>
-    public void Flash(object value, float stayDuration = 1f)
+    public static Vector3Int WorldPointToBlockCoord(Vector3 point)
     {
-        if (_flashCoroutine != null)
-            StopCoroutine(_flashCoroutine);
-
-        _label.text = value?.ToString() ?? "null";
-        _flashCoroutine = StartCoroutine(FlashRoutine(stayDuration));
-    }
-
-    public void ClearDebug()
-    {
-        if (_flashCoroutine != null)
-        {
-            StopCoroutine(_flashCoroutine);
-            _flashCoroutine = null;
-        }
-
-        SetVisible(false);
-        _label.text = string.Empty;
-    }
-
-    private IEnumerator FlashRoutine(float stayDuration)
-    {
-        // Fade in
-        SetVisible(true);
-        yield return FadeRoutine(0f, 1f, _fadeInDuration);
-
-        // Stay
-        yield return new WaitForSeconds(stayDuration);
-
-        // Fade out
-        yield return FadeRoutine(1f, 0f, _fadeOutDuration);
-
-        SetVisible(false);
-        _flashCoroutine = null;
-    }
-
-    private IEnumerator FadeRoutine(float from, float to, float duration)
-    {
-        float elapsed = 0f;
-
-        while (elapsed < duration)
-        {
-            elapsed += Time.deltaTime;
-            float alpha = Mathf.Lerp(from, to, elapsed / duration);
-            _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, alpha);
-            yield return null;
-        }
-
-        _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, to);
-    }
-
-    private void SetVisible(bool visible)
-    {
-        _isVisible = visible;
-        _label.gameObject.SetActive(visible);
-    }
-
-    private TextMeshPro CreateLabel()
-    {
-        var labelGO = new GameObject("DebugLabel");
-        labelGO.transform.SetParent(transform);
-        labelGO.transform.localPosition = _offset;
-
-        var tmp = labelGO.AddComponent<TextMeshPro>();
-        tmp.fontSize = _fontSize;
-        tmp.color = _textColor;
-        tmp.alignment = TextAlignmentOptions.Center;
-
-        return tmp;
+        return new Vector3Int(
+            Mathf.FloorToInt(point.x),
+            Mathf.FloorToInt(point.y),
+            Mathf.FloorToInt(point.z));
     }
 }
 
 
+
 ==========================================
-SCRIPT: GameInpurManager.cs
+SCRIPT: VoxelBlockRegistry.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockRegistry  — ScriptableObject that maps byte IDs → VoxelBlockType.
+//  Create ONE per project via: Assets > Create > VoxelWorld > Block Registry
+//
+//  USAGE
+//    1. Add all your VoxelBlockType SOs to the `blocks` list.
+//    2. Assign this registry to VoxelWorldSettings.
+//    3. Any system calls VoxelBlockRegistry.GetBlock(id) at runtime.
+//
+//  RULES
+//    • blockId 0 is Air — must always exist in the list.
+//    • IDs must be unique; the editor logs a warning if not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+[CreateAssetMenu(fileName = "BlockRegistry", menuName = "VoxelWorld/Block Registry")]
+public class VoxelBlockRegistry : ScriptableObject
+{
+    [SerializeField] private List<VoxelBlockType> blocks = new();
+
+    // Built at runtime from the list above — O(1) lookup.
+    private Dictionary<byte, VoxelBlockType> _lookup;
+
+    // ── Singleton-style accessor (runtime only) ───────────────────────────────
+    private static VoxelBlockRegistry _instance;
+    public static VoxelBlockRegistry Instance => _instance;
+
+    /// <summary>Call this once from VoxelWorldManager.Awake().</summary>
+    public void Initialize()
+    {
+        _instance = this;
+        _lookup   = new Dictionary<byte, VoxelBlockType>(blocks.Count);
+
+        foreach (var block in blocks)
+        {
+            if (block == null) continue;
+
+            if (_lookup.ContainsKey(block.blockId))
+            {
+                Debug.LogWarning($"[VoxelBlockRegistry] Duplicate blockId {block.blockId} on '{block.blockName}'. Skipping.");
+                continue;
+            }
+            _lookup[block.blockId] = block;
+        }
+
+        if (!_lookup.ContainsKey(0))
+            Debug.LogError("[VoxelBlockRegistry] No Air block (id 0) found! Add a VoxelBlockType with blockId = 0.");
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>Returns the block definition for the given id, or null for Air/unknown.</summary>
+    public VoxelBlockType GetBlock(byte id)
+    {
+        _lookup.TryGetValue(id, out VoxelBlockType block);
+        return block;
+    }
+
+    /// <summary>Returns true if the block at this id is solid (should cull neighbours).</summary>
+    public bool IsSolid(byte id)
+    {
+        if (id == 0) return false;
+        return _lookup.TryGetValue(id, out var b) && b.isSolid;
+    }
+
+    public int Count => _lookup?.Count ?? 0;
+}
+
+
+
+==========================================
+SCRIPT: VoxelBlockType.cs
 ==========================================
 using UnityEngine;
 
-public class GameInpurManager : MonoBehaviour
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockType  — ScriptableObject that defines a single block species.
+//  Create via: Assets > Create > VoxelWorld > Block Type
+//
+//  DESIGN NOTES
+//  • One SO per block (Air, Dirt, Stone, Grass, Sand…).
+//  • UV coords follow a standard atlas layout: each face gets a (col, row)
+//    tile address that the mesh builder converts to real UVs at build time.
+//  • Per-face atlas overrides let you have a grass-top / dirt-side / dirt-bottom
+//    without any extra SOs.
+//  • blockId == 0 is ALWAYS Air (no geometry emitted).
+// ─────────────────────────────────────────────────────────────────────────────
+
+[CreateAssetMenu(fileName = "BlockType_New", menuName = "VoxelWorld/Block Type")]
+public class VoxelBlockType : ScriptableObject
 {
-    [SerializeField] private GridSystem gridSystem;
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private SimpleObjectPlacer objectPlacer;
+    // ── Identity ──────────────────────────────────────────────────────────────
+    [Header("Identity")]
+    [Tooltip("Unique numeric ID used inside chunk data arrays. 0 = Air.")]
+    public byte blockId;
 
-    void Update()
+    [Tooltip("Human-readable label (used in editor and debug).")]
+    public string blockName = "New Block";
+
+    // ── Behaviour flags ───────────────────────────────────────────────────────
+    [Header("Behaviour")]
+    [Tooltip("Air and other invisible types skip mesh generation entirely.")]
+    public bool isSolid = true;
+
+    [Tooltip("Transparent blocks (glass, water) still cull neighbours.")]
+    public bool isTransparent = false;
+
+    // ── Texture Atlas ─────────────────────────────────────────────────────────
+    [Header("Texture Atlas (tile col, row)")]
+    [Tooltip("Fallback tile used for any face that has no override.")]
+    public Vector2Int defaultTile = new Vector2Int(0, 0);
+
+    // Per-face overrides — if the x component is -1, defaultTile is used.
+    public Vector2Int tileTop    = new Vector2Int(-1, 0);
+    public Vector2Int tileBottom = new Vector2Int(-1, 0);
+    public Vector2Int tileFront  = new Vector2Int(-1, 0);
+    public Vector2Int tileBack   = new Vector2Int(-1, 0);
+    public Vector2Int tileLeft   = new Vector2Int(-1, 0);
+    public Vector2Int tileRight  = new Vector2Int(-1, 0);
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    /// <summary>Returns the resolved tile for a given face index (0=Top … 5=Right).</summary>
+    public Vector2Int GetTileForFace(int faceIndex)
     {
-        InventoryInput();
+        Vector2Int candidate = faceIndex switch
+        {
+            0 => tileTop,
+            1 => tileBottom,
+            2 => tileFront,
+            3 => tileBack,
+            4 => tileLeft,
+            5 => tileRight,
+            _ => defaultTile
+        };
+        return candidate.x < 0 ? defaultTile : candidate;
+    }
+}
 
-        PlaceObjectsInput();
+
+
+==========================================
+SCRIPT: VoxelChunk.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelChunk  — MonoBehaviour that represents one loaded chunk in the scene.
+//
+//  Responsibilities
+//  • Owns the MeshFilter, MeshRenderer, and MeshCollider for this chunk.
+//  • Holds a reference to the chunk's VoxelChunkData (pure data).
+//  • Knows how to apply a pre-built MeshData to its mesh components.
+//  • Does NOT generate terrain or build meshes — that belongs to other systems.
+//
+//  Lifecycle (managed by VoxelWorldManager)
+//  1. Instantiated when a chunk enters view distance.
+//  2. Receives SetData() to attach its VoxelChunkData.
+//  3. ApplyMesh() is called after the mesh builder finishes.
+//  4. Destroyed (or returned to pool) when it leaves view distance.
+//
+//  POOLING NOTE
+//  The manager uses a simple pool of VoxelChunk GameObjects.
+//  When recycled, call Reset() to clear the old data before SetData().
+// ─────────────────────────────────────────────────────────────────────────────
+
+[RequireComponent(typeof(MeshFilter))]
+[RequireComponent(typeof(MeshRenderer))]
+[RequireComponent(typeof(MeshCollider))]
+public class VoxelChunk : MonoBehaviour
+{
+    // ── Components ────────────────────────────────────────────────────────────
+    private MeshFilter   _filter;
+    private MeshRenderer _renderer;
+    private MeshCollider _collider;
+
+    // ── Data ──────────────────────────────────────────────────────────────────
+    public VoxelChunkData Data { get; private set; }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    public bool IsMeshDirty { get; set; } = false;
+
+    // ── Unity setup ───────────────────────────────────────────────────────────
+    private void Awake()
+    {
+        _filter   = GetComponent<MeshFilter>();
+        _renderer = GetComponent<MeshRenderer>();
+        _collider = GetComponent<MeshCollider>();
+
+        _filter.mesh = new Mesh { name = "ChunkMesh" };
     }
 
-    private void InventoryInput()
-    {
-        for (int i = 1; i <= 9; i++)
-        {
-            if (Input.GetKeyDown(KeyCode.Alpha0 + i))
-            {
-                inventoryManager.ChangeCurrentSelectedSlot(i - 1);
-            }
-        }
+    // ── Public API ────────────────────────────────────────────────────────────
 
-        if (Input.GetKeyDown(KeyCode.Alpha0))
-        {
-            inventoryManager.ChangeCurrentSelectedSlot(9);
-        }
+    /// <summary>Attaches chunk data and positions the GameObject in the world.</summary>
+    public void SetData(VoxelChunkData data, VoxelWorldSettings settings, Material material)
+    {
+        Data = data;
+        _renderer.material = material;
+        IsMeshDirty = true;
+
+        // Position the chunk: world origin X/Z, bottom of the world at minHeight.
+        transform.position = new Vector3(
+            data.WorldOriginX,
+            settings.minHeight,
+            data.WorldOriginZ);
+
+        gameObject.name = $"Chunk_{data.ChunkCoord.x}_{data.ChunkCoord.y}";
     }
 
-    private void PlaceObjectsInput()
+    /// <summary>Pushes new mesh data onto the chunk mesh and collider. Main thread only.</summary>
+    public void ApplyMesh(in MeshData meshData)
     {
-        if (Input.GetMouseButtonDown(0))
-        {
-            
-            objectPlacer.RemoveObjectFromCell();
-        }
-        else if (Input.GetMouseButtonDown(1))
-        {
-            // Try interaction first, fall back to removal
-            if (TryInteract())
-            {
-                Debug.Log("Interacted with object under cursor.");
-                return;
-            }
-            // Only place if hands are NOT empty — check inventory
-            if (inventoryManager.GetSelectedItem() != null)
-                objectPlacer.PlaceObjectInCell();
-                
-        }
+        Mesh mesh = _filter.mesh;
+        meshData.ApplyToMesh(mesh);
+
+        // Sync the collider to the new mesh
+        _collider.sharedMesh = null;   // force refresh
+        _collider.sharedMesh = mesh;
+
+        IsMeshDirty = false;
     }
 
-    private bool TryInteract()
+    /// <summary>Clears the chunk for reuse by the pool.</summary>
+    public void Reset()
     {
-        if (!HasEmptyHands()) return false;
-        
-        PlacedItem item = objectPlacer.GetPlacedItemUnderCursor();
-        if (item == null) return false;
+        Data = null;
+        _filter.mesh.Clear();
+        _collider.sharedMesh = null;
+        IsMeshDirty = false;
+        gameObject.name = "Chunk_Pooled";
+    }
 
-        IInteractable interactable = item.GetInteractable();
-        if (interactable == null) return false;
+    // ── Block editing (world-facing) ──────────────────────────────────────────
 
-        interactable.Interact();
+    /// <summary>
+    /// Sets a block at WORLD-SPACE block position (wx, wy, wz).
+    /// Returns false if the position is outside this chunk's bounds.
+    /// Marks the chunk dirty — the world manager will schedule a rebuild.
+    /// </summary>
+    public bool TrySetBlockWorld(int wx, int wy, int wz, byte id, VoxelWorldSettings settings)
+    {
+        if (Data == null) return false;
+
+        Vector3Int local = Data.WorldToLocal(wx, wy, wz, settings.minHeight);
+
+        if (!Data.IsInBounds(local.x, local.y, local.z)) return false;
+
+        Data.SetBlock(local.x, local.y, local.z, id);
+        IsMeshDirty = true;
         return true;
     }
 
-
-    private bool HasEmptyHands() => inventoryManager.GetSelectedItem() == null;
+    /// <summary>
+    /// Reads a block at WORLD-SPACE position. Returns 0 (Air) if out of bounds.
+    /// </summary>
+    public byte GetBlockWorld(int wx, int wy, int wz, VoxelWorldSettings settings)
+    {
+        if (Data == null) return 0;
+        Vector3Int local = Data.WorldToLocal(wx, wy, wz, settings.minHeight);
+        return Data.GetBlock(local.x, local.y, local.z);
+    }
 }
 
 
 
 ==========================================
-SCRIPT: RayVisualizer.cs
+SCRIPT: VoxelChunkData.cs
 ==========================================
 using UnityEngine;
 
-public class RayVisualizer : MonoBehaviour
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelChunkData  — Pure data container for one chunk column.
+//  NO MonoBehaviour. This can be created on a background thread.
+//
+//  Layout
+//    _blocks[x, y, z]
+//    x ∈ [0, width)   – local X within the chunk
+//    y ∈ [0, height)  – local Y (maps to world Y via settings.LocalYToWorld)
+//    z ∈ [0, width)   – local Z within the chunk
+//    value = block id (byte), 0 = Air
+//
+//  ChunkCoord is the chunk's address in chunk-space (not block-space).
+//  World block origin = ChunkCoord * chunkWidth.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelChunkData
 {
-    private Camera playerCamera;
+    // ── Public identity ───────────────────────────────────────────────────────
+    public readonly Vector2Int ChunkCoord;   // (cx, cz) in chunk-space
+    public readonly int        Width;
+    public readonly int        Height;
 
-    public float maxRayDistance = 5f;
+    // ── Raw block storage ─────────────────────────────────────────────────────
+    private readonly byte[,,] _blocks;
 
-    public GameObject hitObjectPrefab;
+    // ── Dirty flag — set when blocks change so the renderer knows to rebuild ──
+    public bool IsDirty { get; set; } = true;
 
-    private GameObject hitObject;
+    // ── Constructor ───────────────────────────────────────────────────────────
+    public VoxelChunkData(Vector2Int coord, int width, int height)
+    {
+        ChunkCoord = coord;
+        Width      = width;
+        Height     = height;
+        _blocks    = new byte[width, height, width];
+    }
+
+    // ── Block accessors ───────────────────────────────────────────────────────
+
+    /// <summary>Returns the block id at local (x, y, z). Returns 0 (Air) for out-of-bounds.</summary>
+    public byte GetBlock(int lx, int ly, int lz)
+    {
+        if (!IsInBounds(lx, ly, lz)) return 0;
+        return _blocks[lx, ly, lz];
+    }
+
+    /// <summary>Sets the block id at local (lx, ly, lz) and marks the chunk dirty.</summary>
+    public void SetBlock(int lx, int ly, int lz, byte id)
+    {
+        if (!IsInBounds(lx, ly, lz)) return;
+        _blocks[lx, ly, lz] = id;
+        IsDirty = true;
+    }
+
+    // ── Coordinate helpers ────────────────────────────────────────────────────
+
+    /// <summary>World block X origin of this chunk.</summary>
+    public int WorldOriginX => ChunkCoord.x * Width;
+
+    /// <summary>World block Z origin of this chunk.</summary>
+    public int WorldOriginZ => ChunkCoord.y * Width;
+
+    /// <summary>Converts a world block position to a local position within this chunk.
+    /// Does NOT validate bounds — caller must check IsInBounds separately if needed.</summary>
+    public Vector3Int WorldToLocal(int wx, int wy, int wz, int minHeight)
+    {
+        return new Vector3Int(wx - WorldOriginX, wy - minHeight, wz - WorldOriginZ);
+    }
+
+    public bool IsInBounds(int lx, int ly, int lz)
+        => lx >= 0 && lx < Width
+        && ly >= 0 && ly < Height
+        && lz >= 0 && lz < Width;
+
+    // ── Bulk fill (used by terrain generator) ────────────────────────────────
+
+    /// <summary>Fills the entire chunk with a single block id (e.g. 0 to clear).</summary>
+    public void Fill(byte id)
+    {
+        for (int x = 0; x < Width;  x++)
+        for (int y = 0; y < Height; y++)
+        for (int z = 0; z < Width;  z++)
+            _blocks[x, y, z] = id;
+
+        IsDirty = true;
+    }
+}
 
 
+
+==========================================
+SCRIPT: VoxelMeshBuilder.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelMeshBuilder  — Pure static class that converts a VoxelChunkData into
+//  Unity mesh data using greedy face-culling.
+//
+//  HOW FACE CULLING WORKS
+//  For every solid block, we check each of its 6 neighbours:
+//    • If the neighbour is Air (or transparent), we emit that face.
+//    • If the neighbour is solid and opaque, we skip the face.
+//  This is exactly what Minecraft does — the result is that interior block
+//  faces are never drawn, which massively reduces vertex and triangle counts.
+//
+//  CROSS-CHUNK NEIGHBOUR LOOKUP
+//  The builder accepts a IChunkNeighbourSampler so it can ask "what block is
+//  at local x=-1?" and get the answer from the adjacent loaded chunk.
+//  If the neighbour chunk isn't loaded yet, the sampler returns 0 (Air),
+//  which means border faces are emitted — conservative but always correct.
+//
+//  ATLAS UV MAPPING
+//  Each face maps to a tile in the atlas texture using the block's GetTileForFace().
+//  UV coordinates are computed from tile (col, row) + pixel-perfect inset to
+//  avoid bleeding between tiles.
+//
+//  OUTPUT
+//  Returns a MeshData struct (plain arrays) — no Unity API calls needed.
+//  Call ApplyToMesh() on the main thread to push it onto a Mesh object.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public static class VoxelMeshBuilder
+{
+    // ── Face directions (matches VoxelBlockType face index 0..5) ─────────────
+    // 0=Top  1=Bottom  2=Front(+Z)  3=Back(−Z)  4=Left(−X)  5=Right(+X)
+    private static readonly Vector3Int[] FaceNormals =
+    {
+        Vector3Int.up,    Vector3Int.down,
+        Vector3Int.forward, new Vector3Int(0, 0, -1),
+        new Vector3Int(-1, 0, 0), Vector3Int.right
+    };
+
+    // Four vertices per face in local block space, counter-clockwise when
+    // viewed from outside (Unity's left-hand coordinate system).
+    // Each row is one face; each pair is a vertex offset from block origin.
+    private static readonly Vector3[,] FaceVertices =
+    {
+        // Top (+Y)
+        { new(0,1,0), new(0,1,1), new(1,1,1), new(1,1,0) },
+        // Bottom (−Y)
+        { new(0,0,0), new(1,0,0), new(1,0,1), new(0,0,1) },
+        // Front (+Z)
+        { new(0,0,1), new(1,0,1), new(1,1,1), new(0,1,1) },
+        // Back (−Z)
+        { new(1,0,0), new(0,0,0), new(0,1,0), new(1,1,0) },
+        // Left (−X)
+        { new(0,0,0), new(0,0,1), new(0,1,1), new(0,1,0) },
+        // Right (+X)
+        { new(1,0,1), new(1,0,0), new(1,1,0), new(1,1,1) },
+    };
+
+    // UV corners for a unit quad (before atlas remapping)
+    private static readonly Vector2[] BaseUVs =
+    {
+        new(0, 0), new(0, 1), new(1, 1), new(1, 0)
+    };
+
+    // Triangle indices for two triangles forming one quad (relative to quad base)
+    private static readonly int[] QuadTriangles = { 0, 1, 2, 0, 2, 3 };
+
+    // ── Inset to avoid atlas bleeding (in normalised UV units per tile) ───────
+    private const float UV_INSET = 0.001f;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Public entry point
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds mesh data for <paramref name="chunk"/>.
+    /// Safe to call on a background thread — no Unity API calls are made.
+    /// </summary>
+    public static MeshData Build(
+        VoxelChunkData         chunk,
+        VoxelWorldSettings     settings,
+        IChunkNeighbourSampler sampler)
+    {
+        var registry = settings.blockRegistry;
+        float tileSize = settings.TileUVSize;
+
+        var vertices  = new List<Vector3>();
+        var triangles = new List<int>();
+        var uvs       = new List<Vector2>();
+
+        for (int lx = 0; lx < chunk.Width;  lx++)
+        for (int ly = 0; ly < chunk.Height; ly++)
+        for (int lz = 0; lz < chunk.Width;  lz++)
+        {
+            byte id = chunk.GetBlock(lx, ly, lz);
+            if (id == 0) continue;   // air — skip
+
+            VoxelBlockType blockDef = registry.GetBlock(id);
+            if (blockDef == null || !blockDef.isSolid) continue;
+
+            var blockOrigin = new Vector3(lx, ly, lz);
+
+            for (int face = 0; face < 6; face++)
+            {
+                Vector3Int dir = FaceNormals[face];
+                int nx = lx + dir.x;
+                int ny = ly + dir.y;
+                int nz = lz + dir.z;
+
+                // Resolve neighbour — may cross chunk border
+                byte neighbourId = SampleNeighbour(chunk, sampler, nx, ny, nz, settings);
+
+                // Only emit face if neighbour is non-solid (air, water, etc.)
+                if (registry.IsSolid(neighbourId)) continue;
+
+                // ── Emit face ─────────────────────────────────────────────
+                int baseVertex = vertices.Count;
+
+                for (int v = 0; v < 4; v++)
+                    vertices.Add(blockOrigin + FaceVertices[face, v]);
+
+                foreach (int t in QuadTriangles)
+                    triangles.Add(baseVertex + t);
+
+                // ── Atlas UV ──────────────────────────────────────────────
+                Vector2Int tile = blockDef.GetTileForFace(face);
+                float uMin = tile.x       * tileSize + UV_INSET;
+                float uMax = (tile.x + 1) * tileSize - UV_INSET;
+                float vMin = tile.y       * tileSize + UV_INSET;
+                float vMax = (tile.y + 1) * tileSize - UV_INSET;
+
+                // Map BaseUVs corners to atlas tile
+                uvs.Add(new Vector2(uMin, vMin));
+                uvs.Add(new Vector2(uMin, vMax));
+                uvs.Add(new Vector2(uMax, vMax));
+                uvs.Add(new Vector2(uMax, vMin));
+            }
+        }
+
+        return new MeshData(vertices, triangles, uvs);
+    }
+
+    // ── Neighbour sampling helper ─────────────────────────────────────────────
+
+    private static byte SampleNeighbour(
+        VoxelChunkData         chunk,
+        IChunkNeighbourSampler sampler,
+        int lx, int ly, int lz,
+        VoxelWorldSettings     settings)
+    {
+        // Local Y out of world range → treat as air
+        if (ly < 0 || ly >= chunk.Height) return 0;
+
+        // Within this chunk?
+        if (lx >= 0 && lx < chunk.Width && lz >= 0 && lz < chunk.Width)
+            return chunk.GetBlock(lx, ly, lz);
+
+        // Cross-chunk border — delegate to the sampler
+        if (sampler == null) return 0;   // no sampler = treat border as air
+
+        int wx = chunk.WorldOriginX + lx;
+        int wy = settings.LocalYToWorld(ly);
+        int wz = chunk.WorldOriginZ + lz;
+        return sampler.GetBlockAt(wx, wy, wz);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  MeshData  — Plain data struct, no Unity API.
+//  Build it on a thread; call ApplyToMesh() on the main thread.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public readonly struct MeshData
+{
+    public readonly List<Vector3> Vertices;
+    public readonly List<int>     Triangles;
+    public readonly List<Vector2> UVs;
+
+    public MeshData(List<Vector3> v, List<int> t, List<Vector2> u)
+    {
+        Vertices  = v;
+        Triangles = t;
+        UVs       = u;
+    }
+
+    public bool IsEmpty => Vertices == null || Vertices.Count == 0;
+
+    /// <summary>Pushes the data into a Unity Mesh. Call on the main thread only.</summary>
+    public void ApplyToMesh(Mesh mesh)
+    {
+        mesh.Clear();
+        if (IsEmpty) return;
+
+        mesh.SetVertices(Vertices);
+        mesh.SetTriangles(Triangles, 0);
+        mesh.SetUVs(0, UVs);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  IChunkNeighbourSampler  — Abstraction that lets the mesh builder query
+//  block data from neighbouring chunks without knowing about the chunk manager.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public interface IChunkNeighbourSampler
+{
+    /// <summary>Returns the block id at world-space block coordinate (wx, wy, wz).</summary>
+    byte GetBlockAt(int wx, int wy, int wz);
+}
+
+
+
+==========================================
+SCRIPT: VoxelTerrainGenerator.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelTerrainGenerator  — Pure static logic class (no MonoBehaviour).
+//  Fills a VoxelChunkData from scratch using layered Perlin noise.
+//
+//  DESIGN PRINCIPLES
+//  • Completely decoupled from rendering — only depends on VoxelChunkData and
+//    VoxelWorldSettings. Safe to call on a background thread.
+//  • Height is clamped to [settings.minHeight … settings.maxHeight].
+//  • Block assignment is driven by a simple layer stack that is easy to expand.
+//
+//  EXTENDING
+//  To add biomes: pass a BiomeData SO and branch inside AssignBlock.
+//  To add caves: add a 3-D noise pass after the height pass.
+//  To add structures: call a separate StructurePlacer after Generate().
+// ─────────────────────────────────────────────────────────────────────────────
+
+public static class VoxelTerrainGenerator
+{
+    // ── Block ID constants (keep in sync with your VoxelBlockType SOs) ────────
+    // Using constants keeps the generator readable without passing the registry.
+    private const byte AIR   = 0;
+    private const byte STONE = 1;
+    private const byte DIRT  = 2;
+    private const byte GRASS = 3;
+    private const byte SAND  = 4;
+    private const byte WATER = 5;   // optional — place if below sea level
+
+    // Sea level in world-space Y. Tweak freely.
+    private const int SEA_LEVEL = 0;
+
+    // How many dirt layers sit below the grass top.
+    private const int DIRT_DEPTH = 2;
+
+    // ── Entry point ───────────────────────────────────────────────────────────
+
+    /// <summary>Populates <paramref name="data"/> with terrain blocks.
+    /// Call once per chunk, either on the main thread or a worker thread.</summary>
+    public static void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed)
+    {
+        // Pre-compute a per-seed offset so chunks don't tile at the origin.
+        float offsetX = seed * 0.1f;
+        float offsetZ = seed * 0.1f;
+
+        int worldOriginX = data.WorldOriginX;
+        int worldOriginZ = data.WorldOriginZ;
+        int minY         = settings.minHeight;
+        int maxY         = settings.maxHeight;
+        int totalHeight  = data.Height;
+
+        for (int lx = 0; lx < data.Width; lx++)
+        for (int lz = 0; lz < data.Width; lz++)
+        {
+            int wx = worldOriginX + lx;
+            int wz = worldOriginZ + lz;
+
+            // ── Sample fractional Brownian motion height ───────────────────
+            float normalizedHeight = FractionalBrownianMotion(
+                wx, wz,
+                offsetX, offsetZ,
+                settings.noiseScale,
+                settings.octaves,
+                settings.persistence,
+                settings.lacunarity);
+
+            // Map [0..1] to world Y range
+            int surfaceY = Mathf.RoundToInt(Mathf.Lerp(minY, maxY, normalizedHeight));
+            surfaceY     = Mathf.Clamp(surfaceY, minY, maxY);
+
+            // ── Fill column ───────────────────────────────────────────────
+            for (int ly = 0; ly < totalHeight; ly++)
+            {
+                int wy = settings.LocalYToWorld(ly);
+                data.SetBlock(lx, ly, lz, AssignBlock(wy, surfaceY, minY));
+            }
+        }
+
+        data.IsDirty = true;
+    }
+
+    // ── Block assignment ─────────────────────────────────────────────────────
+
+    /// <summary>Decides which block id belongs at world Y <paramref name="wy"/>
+    /// given the terrain surface at <paramref name="surfaceY"/>.</summary>
+    private static byte AssignBlock(int wy, int surfaceY, int minY)
+    {
+        if (wy > surfaceY)
+        {
+            // Above surface — air (or water if below sea level)
+            return (wy <= SEA_LEVEL) ? WATER : AIR;
+        }
+
+        if (wy == surfaceY)
+        {
+            // Top-most solid layer
+            if (surfaceY <= SEA_LEVEL) return SAND;   // underwater beaches
+            return GRASS;
+        }
+
+        if (wy >= surfaceY - DIRT_DEPTH)
+        {
+            return DIRT;
+        }
+
+        // Everything deeper is stone (or the absolute bedrock at minY)
+        return wy == minY ? STONE : STONE;
+    }
+
+    // ── Fractional Brownian Motion ───────────────────────────────────────────
+
+    private static float FractionalBrownianMotion(
+        int wx, int wz,
+        float offsetX, float offsetZ,
+        float scale,
+        int octaves,
+        float persistence,
+        float lacunarity)
+    {
+        float amplitude = 1f;
+        float frequency = 1f;
+        float value     = 0f;
+        float maxValue  = 0f;   // used for normalisation
+
+        for (int o = 0; o < octaves; o++)
+        {
+            float sampleX = (wx + offsetX) / scale * frequency;
+            float sampleZ = (wz + offsetZ) / scale * frequency;
+
+            // Mathf.PerlinNoise returns [0..1]
+            value    += Mathf.PerlinNoise(sampleX, sampleZ) * amplitude;
+            maxValue += amplitude;
+
+            amplitude *= persistence;
+            frequency *= lacunarity;
+        }
+
+        return value / maxValue;   // normalise to [0..1]
+    }
+}
+
+
+
+==========================================
+SCRIPT: VoxelWorldManager.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelWorldManager  — The central brain of the voxel world system.
+//
+//  RESPONSIBILITIES
+//  1. Tracks the player's chunk coordinate.
+//  2. Loads (generates + meshes) chunks that enter view distance.
+//  3. Unloads chunks that leave view distance, returning them to a pool.
+//  4. Manages a rebuild queue — dirty chunks get remeshed in budget slices.
+//  5. Implements IChunkNeighbourSampler so the mesh builder can query
+//     cross-chunk block data without circular dependencies.
+//
+//  HOW TO SET UP IN UNITY
+//  • Create a GameObject → Add VoxelWorldManager.
+//  • Assign a VoxelWorldSettings SO in the Inspector.
+//  • Assign your VoxelChunk prefab (has MeshFilter, MeshRenderer, MeshCollider).
+//  • Assign the Transform of the player (or camera).
+//  • Press Play — the world streams around the player.
+//
+//  INTEGRATION WITH EXISTING GridSystem
+//  VoxelWorldManager does NOT touch your existing GridSystem.cs.
+//  The two systems share a coordinate convention (1 unit = 1 cell) but are
+//  otherwise independent. If you want to place GridSystem objects ON TOP of
+//  the voxel terrain, query TryGetBlockWorld() or GetTopSolidY() to find the
+//  surface height and then use your existing GridSystem.GridToWorldPosition().
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
+{
+    // ── Inspector ─────────────────────────────────────────────────────────────
+    [Header("Settings")]
+    [SerializeField] private VoxelWorldSettings settings;
+
+    [Header("Scene references")]
+    [SerializeField] private Transform playerTransform;
+    [SerializeField] private GameObject chunkPrefab;
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    // Active chunks keyed by chunk coord (cx, cz)
+    private readonly Dictionary<Vector2Int, VoxelChunk>     _activeChunks = new();
+    // Chunk data keyed by chunk coord (kept alive even when chunk is pooled
+    // so we don't re-generate terrain when the player comes back)
+    private readonly Dictionary<Vector2Int, VoxelChunkData> _chunkDataCache = new();
+
+    // Object pool for VoxelChunk GameObjects
+    private readonly Queue<VoxelChunk>  _pool        = new();
+
+    // Rebuild queue — dirty chunks waiting for a remesh
+    private readonly Queue<Vector2Int>  _rebuildQueue = new();
+
+    // Track last known chunk coordinate to avoid re-scanning every frame
+    private Vector2Int _lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+
+    // Resolved seed (may be randomised if settings.seed == 0)
+    private int _seed;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        ValidateReferences();
+        settings.blockRegistry.Initialize();
+        _seed = settings.seed == 0 ? Random.Range(1, int.MaxValue) : settings.seed;
+    }
 
     private void Start()
     {
-        if (playerCamera == null)
-        {
-            playerCamera = Camera.main;
-        }
-        
-        if (hitObjectPrefab != null)
-        {
-            hitObject = Instantiate(hitObjectPrefab, Vector3.zero, Quaternion.identity);
-            hitObject.SetActive(false);
-        }
-        else
-        {
-            Debug.LogWarning("RayVisualizer: Prefab para visualização de hit não está atribuído!");
-        }
+        UpdateStreamingFromPlayer(force: true);
     }
 
     private void Update()
     {
-        PerformRay();
+        UpdateStreamingFromPlayer(force: false);
+        ProcessRebuildQueue();
     }
 
-    private void PerformRay()
+    // ── Streaming ─────────────────────────────────────────────────────────────
+
+    private void UpdateStreamingFromPlayer(bool force)
     {
-        // Proteção contra referências nulas
-        if (playerCamera == null)
+        Vector2Int playerChunkCoord = WorldToChunkCoord(playerTransform.position);
+
+        if (!force && playerChunkCoord == _lastPlayerChunkCoord) return;
+        _lastPlayerChunkCoord = playerChunkCoord;
+
+        int range = settings.viewDistanceInChunks;
+
+        // ── Collect which chunks SHOULD be loaded ─────────────────────────
+        var desired = new HashSet<Vector2Int>();
+        for (int cx = -range; cx <= range; cx++)
+        for (int cz = -range; cz <= range; cz++)
+            desired.Add(playerChunkCoord + new Vector2Int(cx, cz));
+
+        // ── Unload chunks that are now out of range ────────────────────────
+        var toUnload = new List<Vector2Int>();
+        foreach (var coord in _activeChunks.Keys)
+            if (!desired.Contains(coord)) toUnload.Add(coord);
+
+        foreach (var coord in toUnload) UnloadChunk(coord);
+
+        // ── Load/activate chunks that are now in range ─────────────────────
+        foreach (var coord in desired)
+            if (!_activeChunks.ContainsKey(coord)) LoadChunk(coord);
+    }
+
+    // ── Chunk load / unload ───────────────────────────────────────────────────
+
+    private void LoadChunk(Vector2Int coord)
+    {
+        // Get or generate chunk data
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
         {
-            Debug.LogWarning("RayVisualizer: Câmera não está referenciada!");
-            return;
+            data = new VoxelChunkData(coord, settings.chunkWidth, settings.chunkHeight);
+            VoxelTerrainGenerator.Generate(data, settings, _seed);
+            _chunkDataCache[coord] = data;
         }
 
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
+        // Get a pooled GameObject or instantiate a new one
+        VoxelChunk chunk = GetOrCreateChunkObject();
+        chunk.gameObject.SetActive(true);
+        chunk.SetData(data, settings, settings.chunkMaterial);
+        _activeChunks[coord] = chunk;
 
-        if (Physics.Raycast(ray, out hit, maxRayDistance))
+        // Queue for initial mesh build
+        EnqueueRebuild(coord);
+    }
+
+    private void UnloadChunk(Vector2Int coord)
+    {
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return;
+
+        chunk.Reset();
+        chunk.gameObject.SetActive(false);
+        _pool.Enqueue(chunk);
+        _activeChunks.Remove(coord);
+        // NOTE: _chunkDataCache keeps the data so re-entering doesn't re-generate
+    }
+
+    // ── Rebuild queue ─────────────────────────────────────────────────────────
+
+    /// <summary>Adds coord to the rebuild queue (deduplicated at consume time).</summary>
+    public void EnqueueRebuild(Vector2Int coord)
+    {
+        _rebuildQueue.Enqueue(coord);
+    }
+
+    private void ProcessRebuildQueue()
+    {
+        int budget = settings.maxChunkBuildsPerFrame;
+        int processed = 0;
+
+        while (_rebuildQueue.Count > 0 && processed < budget)
         {
-            hitObject.SetActive(true);
-            hitObject.transform.position = hit.point;
+            Vector2Int coord = _rebuildQueue.Dequeue();
+
+            if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) continue;
+            if (chunk.Data == null) continue;
+
+            MeshData meshData = VoxelMeshBuilder.Build(chunk.Data, settings, this);
+            chunk.ApplyMesh(meshData);
+            processed++;
         }
-        else
+    }
+
+    // ── IChunkNeighbourSampler ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the block id at world-space block position (wx, wy, wz).
+    /// Used by VoxelMeshBuilder to resolve cross-chunk border faces.
+    /// </summary>
+    public byte GetBlockAt(int wx, int wy, int wz)
+    {
+        // Convert world block position to chunk coord
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+
+        // If the chunk is active, query its data directly
+        if (_activeChunks.TryGetValue(coord, out VoxelChunk chunk) && chunk.Data != null)
         {
-            hitObject.SetActive(false);
+            int ly = settings.WorldYToLocal(wy);
+            int lx = wx - chunk.Data.WorldOriginX;
+            int lz = wz - chunk.Data.WorldOriginZ;
+            return chunk.Data.GetBlock(lx, ly, lz);
         }
-        
+
+        // If chunk data is cached but not active (e.g. just outside view)
+        if (_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
+        {
+            int ly = settings.WorldYToLocal(wy);
+            int lx = wx - data.WorldOriginX;
+            int lz = wz - data.WorldOriginZ;
+            return data.GetBlock(lx, ly, lz);
+        }
+
+        return 0; // unknown chunk → treat as air
+    }
+
+    // ── Public block editing API ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Places or removes a block at world-space block position.
+    /// Automatically flags the chunk (and affected neighbours) for rebuild.
+    /// </summary>
+    public bool TrySetBlock(int wx, int wy, int wz, byte id)
+    {
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return false;
+        if (!chunk.TrySetBlockWorld(wx, wy, wz, id, settings)) return false;
+
+        EnqueueRebuild(coord);
+
+        // If the block is on a chunk border, flag the neighbour too
+        int localX = wx - chunk.Data.WorldOriginX;
+        int localZ = wz - chunk.Data.WorldOriginZ;
+        int w = settings.chunkWidth - 1;
+
+        if (localX == 0)              EnqueueRebuildIfActive(coord + new Vector2Int(-1, 0));
+        if (localX == w)              EnqueueRebuildIfActive(coord + new Vector2Int( 1, 0));
+        if (localZ == 0)              EnqueueRebuildIfActive(coord + new Vector2Int( 0,-1));
+        if (localZ == w)              EnqueueRebuildIfActive(coord + new Vector2Int( 0, 1));
+
+        return true;
+    }
+
+    /// <summary>Returns the highest solid block Y at world X/Z, or minHeight-1 if none.</summary>
+    public int GetTopSolidY(int wx, int wz)
+    {
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data)) return settings.minHeight - 1;
+
+        int lx = wx - data.WorldOriginX;
+        int lz = wz - data.WorldOriginZ;
+
+        for (int ly = data.Height - 1; ly >= 0; ly--)
+        {
+            byte id = data.GetBlock(lx, ly, lz);
+            if (settings.blockRegistry.IsSolid(id))
+                return settings.LocalYToWorld(ly);
+        }
+        return settings.minHeight - 1;
+    }
+
+    // ── Coordinate helpers ────────────────────────────────────────────────────
+
+    private Vector2Int WorldToChunkCoord(Vector3 worldPos)
+    {
+        int cx = Mathf.FloorToInt(worldPos.x / settings.chunkWidth);
+        int cz = Mathf.FloorToInt(worldPos.z / settings.chunkWidth);
+        return new Vector2Int(cx, cz);
+    }
+
+    private Vector2Int BlockToChunkCoord(int wx, int wz)
+    {
+        // Use FloorToInt to handle negative block coords correctly
+        int cx = Mathf.FloorToInt((float)wx / settings.chunkWidth);
+        int cz = Mathf.FloorToInt((float)wz / settings.chunkWidth);
+        return new Vector2Int(cx, cz);
+    }
+
+    // ── Pool helpers ──────────────────────────────────────────────────────────
+
+    private VoxelChunk GetOrCreateChunkObject()
+    {
+        if (_pool.Count > 0)
+            return _pool.Dequeue();
+
+        GameObject go = Instantiate(chunkPrefab, transform);
+        return go.GetComponent<VoxelChunk>();
+    }
+
+    private void EnqueueRebuildIfActive(Vector2Int coord)
+    {
+        if (_activeChunks.ContainsKey(coord))
+            EnqueueRebuild(coord);
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────────
+
+    private void ValidateReferences()
+    {
+        if (settings == null)
+            Debug.LogError("[VoxelWorldManager] Missing VoxelWorldSettings!", this);
+        if (playerTransform == null)
+            Debug.LogError("[VoxelWorldManager] Missing player Transform!", this);
+        if (chunkPrefab == null)
+            Debug.LogError("[VoxelWorldManager] Missing chunk prefab!", this);
+        if (settings != null && settings.chunkMaterial == null)
+            Debug.LogWarning("[VoxelWorldManager] No chunk material assigned — chunks will be pink.", this);
     }
 }
 
 
 
 ==========================================
-SCRIPT: SimpleObjectPlacer.cs
+SCRIPT: VoxelWorldSettings.cs
 ==========================================
 using UnityEngine;
 
-public class SimpleObjectPlacer : MonoBehaviour
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelWorldSettings  — Single SO that holds every tunable knob.
+//  Create via: Assets > Create > VoxelWorld > World Settings
+//
+//  Keep one instance per "world profile" (e.g. overworld, cave, test level).
+//  Assign it to VoxelWorldManager in the Inspector.
+// ─────────────────────────────────────────────────────────────────────────────
+
+[CreateAssetMenu(fileName = "WorldSettings", menuName = "VoxelWorld/World Settings")]
+public class VoxelWorldSettings : ScriptableObject
 {
-    private Camera playerCamera;
-    [SerializeField] private float maxRayDistance = 5f;
+    // ── Block Registry ────────────────────────────────────────────────────────
+    [Header("Block Registry")]
+    public VoxelBlockRegistry blockRegistry;
+
+    // ── Chunk Dimensions ──────────────────────────────────────────────────────
+    [Header("Chunk Dimensions")]
+    [Tooltip("Number of blocks per chunk on X and Z axes.")]
+    [Range(4, 32)] public int chunkWidth  = 16;
+
+    [Tooltip("Number of blocks in a chunk on the Y axis.")]
+    [Range(1, 64)] public int chunkHeight = 9;   // height range −4 … +4 = 9 slices
+
+    // ── World Height ──────────────────────────────────────────────────────────
+    [Header("World Height Limits")]
+    [Tooltip("Minimum block Y in world space (inclusive). Default −4 for your spec.")]
+    public int minHeight = -4;
+
+    [Tooltip("Maximum block Y in world space (inclusive). Default +4 for your spec.")]
+    public int maxHeight =  4;
+
+    // ── Streaming / View Distance ─────────────────────────────────────────────
+    [Header("Streaming")]
+    [Tooltip("How many chunks are loaded around the player on X and Z (in chunk units).")]
+    [Range(1, 12)] public int viewDistanceInChunks = 4;
+
+    [Tooltip("Max chunks rebuilt per frame — controls hitching vs latency trade-off.")]
+    [Range(1, 8)]  public int maxChunkBuildsPerFrame = 2;
+
+    // ── Terrain Generation ────────────────────────────────────────────────────
+    [Header("Terrain Generation")]
+    [Tooltip("Master seed. 0 = random at runtime.")]
+    public int seed = 0;
+
+    [Tooltip("Noise scale — larger = smoother hills.")]
+    [Range(10f, 200f)] public float noiseScale = 60f;
+
+    [Tooltip("Number of noise octaves for detail layering.")]
+    [Range(1, 6)] public int octaves = 3;
+
+    [Tooltip("How quickly amplitude falls per octave.")]
+    [Range(0f, 1f)] public float persistence = 0.5f;
+
+    [Tooltip("How quickly frequency rises per octave.")]
+    [Range(1f, 4f)] public float lacunarity = 2f;
+
+    // ── Texture Atlas ─────────────────────────────────────────────────────────
+    [Header("Texture Atlas")]
+    [Tooltip("Number of tiles in one row/column of the atlas texture.")]
+    [Range(1, 32)] public int atlasSize = 4;   // 4×4 = 16 block types
+
+    // ── Render Material ───────────────────────────────────────────────────────
+    [Header("Rendering")]
+    [Tooltip("Material that holds the block atlas texture. Must use a shader with vertex colours if you want tinting.")]
+    public Material chunkMaterial;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>UV size of one tile in a square atlas.</summary>
+    public float TileUVSize => 1f / atlasSize;
+
+    /// <summary>Total block height of the world (minHeight to maxHeight inclusive).</summary>
+    public int TotalWorldHeight => maxHeight - minHeight + 1;
+
+    /// <summary>Converts a world-space block Y to a local chunk slice index.</summary>
+    public int WorldYToLocal(int worldY) => worldY - minHeight;
+
+    /// <summary>Converts a local Y slice back to world-space block Y.</summary>
+    public int LocalYToWorld(int localY) => localY + minHeight;
+}
+
+
+
+==========================================
+SCRIPT: BaseGenerationPassAsset.cs
+==========================================
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BaseGenerationPassAsset  —  Abstract ScriptableObject factory for
+//  IGenerationPass instances.  Mirrors the pattern of BaseWorldGeneratorAsset.
+//
+//  HOW TO CREATE A NEW PASS SO
+//  1. Create a class that inherits BaseGenerationPassAsset.
+//  2. Store whatever config fields you need (ranges, block IDs, weights…).
+//  3. Implement CreatePass() to return your IGenerationPass, passing `this`
+//     as the config source.
+//  4. Add [CreateAssetMenu(menuName = "WorldGen/Passes/YourName")].
+//  5. Create the asset, configure it, and add it to a DimensionProfile's
+//     passes list.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public abstract class BaseGenerationPassAsset : ScriptableObject
+{
+    /// <summary>
+    /// Called when the dimension is activated (once per dimension load).
+    /// Returns a configured IGenerationPass ready for repeated Apply() calls.
+    /// </summary>
+    public abstract IGenerationPass CreatePass();
+}
+
+
+
+==========================================
+SCRIPT: BaseWorldGeneratorAsset.cs
+==========================================
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BaseWorldGeneratorAsset  —  Abstract ScriptableObject that acts as an
+//  inspector-serializable factory for IWorldGenerator instances.
+//
+//  WHY THIS INDIRECTION?
+//  Interfaces cannot be assigned in the Inspector.  By wrapping each generator
+//  in a thin SO subclass, we can expose a field of type BaseWorldGeneratorAsset
+//  on DimensionProfile and drag-and-drop any generator without code changes.
+//
+//  HOW TO CREATE A NEW GENERATOR SO
+//  1. Create a class that inherits BaseWorldGeneratorAsset.
+//  2. Implement CreateGenerator() to return your IWorldGenerator.
+//  3. Add [CreateAssetMenu(menuName = "WorldGen/Generators/YourName")].
+//  4. Create the asset and assign it to a DimensionProfile.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public abstract class BaseWorldGeneratorAsset : ScriptableObject
+{
+    /// <summary>
+    /// Called once when the dimension is activated.
+    /// Must return a fully-configured IWorldGenerator ready to call Generate().
+    /// </summary>
+    public abstract IWorldGenerator CreateGenerator();
+}
+
+
+
+==========================================
+SCRIPT: IGenerationPass.cs
+==========================================
+// ═══════════════════════════════════════════════════════════════════════════════
+//  IGenerationPass  —  A single composable step in the world-generation pipeline.
+//
+//  PURPOSE
+//  Generators fill the chunk with base terrain.  Passes then modify that data
+//  before the mesh is built:  structure placement, ore veins, decorations,
+//  surface-detail scattering, etc.
+//
+//  PIPELINE ORDER (per chunk)
+//    1. IWorldGenerator.Generate()      ← fills blank canvas
+//    2. IGenerationPass[0].Apply()      ← e.g. room/corridor carver
+//    3. IGenerationPass[1].Apply()      ← e.g. prop placer
+//    4. …
+//    N. VoxelMeshBuilder.Build()        ← convert to mesh
+//
+//  DESIGN NOTES
+//  · Passes are stored in a List<IGenerationPass> on the DimensionProfile SO.
+//    Add, remove, or reorder them without touching any generator code.
+//  · Passes share the same thread-safety contract as IWorldGenerator:
+//    no Unity API calls inside Apply().
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public interface IGenerationPass
+{
+    /// <summary>Human-readable label shown in editor logs and profiler.</summary>
+    string PassName { get; }
+
+    /// <summary>
+    /// Applies this pass to an already-filled <paramref name="data"/>.
+    /// Called on the main thread after IWorldGenerator.Generate().
+    /// </summary>
+    void Apply(VoxelChunkData data, VoxelWorldSettings settings, int seed);
+}
+
+
+
+==========================================
+SCRIPT: IWorldGenerator.cs
+==========================================
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  IWorldGenerator  —  Contract every world generator must satisfy.
+//
+//  PURPOSE
+//  Defines the single entry-point called by VoxelWorldManager when a chunk
+//  needs terrain data.  Swap generators per-dimension without touching any
+//  engine code — the manager only cares about this interface.
+//
+//  IMPLEMENTORS
+//  · OverworldGenerator      (existing fBm noise terrain)
+//  · BackroomsGenerator      (procedural liminal-space rooms & corridors)
+//  · Any future generator    (caves, sky islands, …)
+//
+//  THREAD SAFETY
+//  Implementations MUST be safe to call from a worker thread.
+//  → No MonoBehaviour / SceneManager / Unity API calls.
+//  → Only pure C#, System.Math, and Unity.Mathematics / Mathf.PerlinNoise.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public interface IWorldGenerator
+{
+    /// <summary>
+    /// Populates <paramref name="data"/> with block IDs.
+    /// Called once per new chunk; result is cached in VoxelWorldManager.
+    /// </summary>
+    /// <param name="data">Empty chunk data container to fill.</param>
+    /// <param name="settings">Shared world settings (chunk dims, height range…).</param>
+    /// <param name="seed">World seed, already resolved (never 0).</param>
+    void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed);
+}
+
+
+
+==========================================
+SCRIPT: VoxelWorldManagerExtended.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Events;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  VoxelWorldManagerExtended  —  Drop-in upgrade of VoxelWorldManager that adds
+//  dimension-aware, modular world generation.
+//
+//  RELATIONSHIP TO VoxelWorldManager
+//  This class REPLACES VoxelWorldManager in the scene.  All chunk streaming,
+//  pooling, rebuild queuing, and IChunkNeighbourSampler logic is reproduced
+//  here verbatim so the original file stays untouched (per spec).
+//
+//  NEW FEATURES vs. VoxelWorldManager
+//  ┌─────────────────────────────────────────────────────────────────────────┐
+//  │ 1. Pluggable generator    — any IWorldGenerator (from DimensionRegistry)│
+//  │ 2. Ordered pass pipeline  — IGenerationPass[] run after base generation │
+//  │ 3. Dimension switching    — SetActiveDimension() flushes & reloads world│
+//  │ 4. GridSystem integration — NotifyGridSystem() marks cells occupied     │
+//  │ 5. UnityEvent hooks       — OnDimensionWillChange / OnDimensionChanged  │
+//  └─────────────────────────────────────────────────────────────────────────┘
+//
+//  HOW TO SET UP
+//  1. Remove (or disable) any existing VoxelWorldManager component.
+//  2. Add VoxelWorldManagerExtended to a GameObject.
+//  3. Assign dimensionRegistry, playerTransform, chunkPrefab, and optionally
+//     gridSystem in the Inspector.
+//  4. Create DimensionProfile + DimensionRegistry assets and populate them.
+//  5. Press Play.
+//
+//  SWITCHING DIMENSIONS AT RUNTIME
+//  Call  worldManagerExtended.SwitchDimension("backrooms_level0");
+//  or    dimensionRegistry.SetActiveDimension("backrooms_level0");  ← same effect
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VoxelWorldManagerExtended : MonoBehaviour, IChunkNeighbourSampler
+{
+    // ── Inspector ─────────────────────────────────────────────────────────────
+
+    [Header("Dimension System")]
+    [SerializeField] private DimensionRegistry dimensionRegistry;
+
+    [Header("Scene References")]
+    [SerializeField] private Transform  playerTransform;
+    [SerializeField] private GameObject chunkPrefab;
+
+    [Header("GridSystem Integration (optional)")]
+    [Tooltip("Assign the GridSystem MonoBehaviour if you want generated solid " +
+             "voxel blocks to be automatically marked as occupied cells.")]
     [SerializeField] private GridSystem gridSystem;
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private LayerMask placedObjectLayer;
 
-    private int _placedLayerIndex;       // layer index  (e.g. 8)
-    private int _placedLayerMask;        // bitmask      (e.g. 1 << 8 = 256)
+    [Header("Unity Events")]
+    [Tooltip("Fired just before a dimension switch flushes all chunks.")]
+    public UnityEvent<string> OnDimensionWillChange;
+    [Tooltip("Fired after the new dimension is active and chunks start loading.")]
+    public UnityEvent<string> OnDimensionChanged;
 
-    private const float HIT_BIAS = 0.001f;
+    // ── Runtime state (mirrors VoxelWorldManager) ─────────────────────────────
+
+    private readonly Dictionary<Vector2Int, VoxelChunk>     _activeChunks  = new();
+    private readonly Dictionary<Vector2Int, VoxelChunkData> _chunkDataCache = new();
+    private readonly Queue<VoxelChunk>   _pool         = new();
+    private readonly Queue<Vector2Int>   _rebuildQueue = new();
+
+    private Vector2Int _lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+    private int        _seed;
+
+    // Cached for the active dimension
+    private IWorldGenerator    _generator;
+    private List<IGenerationPass> _passes = new();
+    private VoxelWorldSettings _settings;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        if (dimensionRegistry == null)
+        {
+            Debug.LogError("[VoxelWorldManagerExtended] DimensionRegistry is not assigned!", this);
+            enabled = false;
+            return;
+        }
+
+        dimensionRegistry.Initialize();
+        dimensionRegistry.OnDimensionChanged += HandleDimensionChanged;
+
+        RefreshActiveDimension();
+
+        _seed = _settings != null && _settings.seed != 0
+            ? _settings.seed
+            : Random.Range(1, int.MaxValue);
+    }
+
+    private void OnDestroy()
+    {
+        if (dimensionRegistry != null)
+            dimensionRegistry.OnDimensionChanged -= HandleDimensionChanged;
+    }
 
     private void Start()
     {
-        if (gridSystem == null) Debug.LogWarning("SimpleObjectPlacer: GridSystem não está referenciado!");
-        if (playerCamera == null) playerCamera = Camera.main;
-
-        // Resolve once here — used everywhere else
-        _placedLayerIndex = LayerMaskToIndex(placedObjectLayer);
-        _placedLayerMask  = 1 << _placedLayerIndex;
-    }
-
-    private Vector3Int? GetGridIndexAtPosition()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
-        {
-            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
-            return gridSystem.WorldToGridPosition(adjustedPoint);
-        }
-        return null;
-    }
-
-    public Vector3Int? GetCellFromPlacedItem()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        Debug.DrawRay(ray.origin, ray.direction * maxRayDistance, Color.red, 2f);
-
-        // Uses the pre-built bitmask — guaranteed to match what was assigned
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
-        {
-            PlacedItem placedItem = hit.collider.GetComponentInParent<PlacedItem>();
-
-            if (placedItem != null)
-            {
-                // Use the object's own position, not the ray surface contact point
-                return gridSystem.WorldToGridPosition(placedItem.transform.position);
-            }
-
-            Debug.LogWarning("O objeto atingido não possui o componente PlacedItem.");
-        }
-
-        return null;
-    }
-
-    public void PlaceObjectInCell()
-    {
-        // 1. Validação inicial: se não houver posição, saímos logo
-        if (!(GetGridIndexAtPosition() is Vector3Int gridIndex))
-        {
-            //Debug.Log("Nenhuma célula válida selecionada.");
-            return;
-        }
-
-        // 2. Validação de estado: se estiver ocupado, saímos logo
-        if (gridSystem.IsCellOccupied(gridIndex))
-        {
-            //Debug.Log($"A célula {gridIndex} já está ocupada!");
-            return;
-        }
-
-        // 3. Rota principal: o código que "faz o trabalho" fica sem indentação profunda
-        Vector3 cellCenter = gridSystem.GridToWorldPosition(gridIndex);
-        Vector3 placementPos = new Vector3(
-            cellCenter.x,
-            cellCenter.y - (gridSystem.cellSize / 2f),
-            cellCenter.z
-        );
-
-        ItemData selectedItem = inventoryManager.GetSelectedItem();
-        if (selectedItem == null)
-        {
-            //Debug.Log("Nenhum item selecionado para colocar.");
-            return;
-        }
-
-        GameObject newObj = Instantiate(selectedItem.itemPrefab, placementPos, Quaternion.identity);
-        PlacedItem newObjItem = newObj.AddComponent<PlacedItem>();
-        newObjItem.SetItemData(selectedItem);
-        SetLayerRecursively(newObj, _placedLayerIndex);
-
-        gridSystem.PlaceObjectInCell(gridIndex, newObj);
-    }
-
-    public void RemoveObjectFromCell()
-    {
-        if(!(GetCellFromPlacedItem() is Vector3Int gridIndex))
-        {
-            //Debug.Log("Nenhuma célula válida selecionada para remoção.");
-            return;
-        }
-        gridSystem.RemoveObjectFromCell(gridIndex);
-    }
-
-    private void SetLayerRecursively(GameObject obj, int layer)
-    {
-        foreach (Transform t in obj.GetComponentsInChildren<Transform>(true))
-            t.gameObject.layer = layer;
-    }
-
-    private int LayerMaskToIndex(LayerMask mask)
-    {
-        if (mask.value == 0)
-        {
-            Debug.LogWarning("SimpleObjectPlacer: placedObjectLayer não está configurado! Usando layer 0.");
-            return 0;
-        }
-
-        int value = mask.value;
-        int index = 0;
-        while ((value & 1) == 0) { value >>= 1; index++; }
-        return index;
-    }
-
-    public PlacedItem GetPlacedItemUnderCursor()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
-            return hit.collider.GetComponentInParent<PlacedItem>();
-        return null;
-    }
-}
-
-
-==========================================
-SCRIPT: CellVisualizer.cs
-==========================================
-using UnityEngine;
-
-public class CellVisualizer : MonoBehaviour
-{
-    private Camera playerCamera;
-    public float maxRayDistance = 5f;
-    public GameObject cellUIPrefab;
-    public GridSystem gridSystem;
-    private GameObject cellUIInstance;
-
-    // Ajuste para evitar Z-Fighting
-    private const float Z_FIGHTING_OFFSET = 0.01f;
-    
-    // Pequeno offset para corrigir a precisão do Raycast
-    private const float HIT_BIAS = 0.001f;
-
-    private void Start()
-    {
-        if (gridSystem == null) Debug.LogWarning("CellVisualizer: GridSystem não está referenciado!");
-        if (playerCamera == null) playerCamera = Camera.main;
-        
-        if (cellUIPrefab != null)
-        {
-            cellUIInstance = Instantiate(cellUIPrefab, Vector3.zero, Quaternion.Euler(90, 0, 0));
-            cellUIInstance.SetActive(false);
-        }
+        UpdateStreamingFromPlayer(force: true);
     }
 
     private void Update()
     {
-        PerformRay();
+        UpdateStreamingFromPlayer(force: false);
+        ProcessRebuildQueue();
     }
 
-    private void PerformRay()
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Switches to the dimension with the given <paramref name="id"/>.
+    /// Flushes ALL cached chunk data and reloads the world around the player.
+    /// </summary>
+    public void SwitchDimension(string id)
     {
-        if (playerCamera == null || gridSystem == null) return;
+        if (!dimensionRegistry.SetActiveDimension(id))
+            Debug.LogWarning($"[VoxelWorldManagerExtended] Dimension '{id}' not found.");
+        // HandleDimensionChanged fires via the event
+    }
 
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+    /// <summary>Returns the ID of the currently active dimension.</summary>
+    public string ActiveDimensionId => dimensionRegistry.ActiveProfile?.dimensionId ?? "none";
 
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
+    // Proxies matching VoxelWorldManager's public surface so existing code compiles:
+
+    /// <summary>Places or removes a block at world-space block position.</summary>
+    public bool TrySetBlock(int wx, int wy, int wz, byte id)
+    {
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return false;
+        if (!chunk.TrySetBlockWorld(wx, wy, wz, id, _settings)) return false;
+
+        EnqueueRebuild(coord);
+
+        int localX = wx - chunk.Data.WorldOriginX;
+        int localZ = wz - chunk.Data.WorldOriginZ;
+        int w = _settings.chunkWidth - 1;
+
+        if (localX == 0) EnqueueRebuildIfActive(coord + new Vector2Int(-1,  0));
+        if (localX == w) EnqueueRebuildIfActive(coord + new Vector2Int( 1,  0));
+        if (localZ == 0) EnqueueRebuildIfActive(coord + new Vector2Int( 0, -1));
+        if (localZ == w) EnqueueRebuildIfActive(coord + new Vector2Int( 0,  1));
+
+        // Sync GridSystem occupancy for the edited cell
+        if (gridSystem != null)
         {
-            // APLICAÇÃO DO NUDGE:
-            // Ajustamos o ponto de cálculo para fora da superfície usando a normal
-            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
-
-            Vector3Int gridIndex = gridSystem.WorldToGridPosition(adjustedPoint);
-            Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
-
-            // Ajuste para a base (baseado na metade do tamanho)
-            float halfCellSize = gridSystem.cellSize / 2f;
-            float baseFloorY = cellCenterWorldPosition.y - halfCellSize;
-
-            cellUIInstance.SetActive(true);
-            cellUIInstance.transform.position = new Vector3(
-                cellCenterWorldPosition.x,
-                baseFloorY + Z_FIGHTING_OFFSET,
-                cellCenterWorldPosition.z
-            );
+            if (id == 0)
+                gridSystem.RemoveObjectFromCell(new Vector3Int(wx, wy, wz));
+            else
+                gridSystem.PlaceObjectInCell(new Vector3Int(wx, wy, wz), null);
         }
+
+        return true;
+    }
+
+    /// <summary>Returns the highest solid block Y at world X/Z, or minHeight-1 if none.</summary>
+    public int GetTopSolidY(int wx, int wz)
+    {
+        if (_settings == null) return -1;
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
+            return _settings.minHeight - 1;
+
+        int lx = wx - data.WorldOriginX;
+        int lz = wz - data.WorldOriginZ;
+
+        for (int ly = data.Height - 1; ly >= 0; ly--)
+        {
+            byte bid = data.GetBlock(lx, ly, lz);
+            if (_settings.blockRegistry.IsSolid(bid))
+                return _settings.LocalYToWorld(ly);
+        }
+        return _settings.minHeight - 1;
+    }
+
+    /// <summary>Adds a chunk coordinate to the rebuild queue.</summary>
+    public void EnqueueRebuild(Vector2Int coord) => _rebuildQueue.Enqueue(coord);
+
+    // ── IChunkNeighbourSampler ────────────────────────────────────────────────
+
+    public byte GetBlockAt(int wx, int wy, int wz)
+    {
+        if (_settings == null) return 0;
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+
+        if (_activeChunks.TryGetValue(coord, out VoxelChunk chunk) && chunk.Data != null)
+        {
+            int ly = _settings.WorldYToLocal(wy);
+            int lx = wx - chunk.Data.WorldOriginX;
+            int lz = wz - chunk.Data.WorldOriginZ;
+            return chunk.Data.GetBlock(lx, ly, lz);
+        }
+        if (_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
+        {
+            int ly = _settings.WorldYToLocal(wy);
+            int lx = wx - data.WorldOriginX;
+            int lz = wz - data.WorldOriginZ;
+            return data.GetBlock(lx, ly, lz);
+        }
+        return 0;
+    }
+
+    // ── Dimension change handler ──────────────────────────────────────────────
+
+    private void HandleDimensionChanged(DimensionProfile profile)
+    {
+        string newId = profile.dimensionId;
+        OnDimensionWillChange?.Invoke(newId);
+
+        // Unload all active chunks to pool
+        var coords = new List<Vector2Int>(_activeChunks.Keys);
+        foreach (var c in coords) UnloadChunk(c);
+
+        // Clear cached data (new dimension = new world)
+        _chunkDataCache.Clear();
+
+        // Reset position tracker so streaming restarts
+        _lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+
+        // Refresh generator + passes + settings
+        RefreshActiveDimension();
+
+        // Re-seed (each dimension can carry its own seed via its VoxelWorldSettings)
+        _seed = _settings != null && _settings.seed != 0
+            ? _settings.seed
+            : _seed; // keep global seed if dimension uses 0
+
+        // Teleport player to dimension spawn
+        if (playerTransform != null)
+            playerTransform.position = profile.defaultSpawnPosition;
+
+        // Force streaming restart next Update
+        UpdateStreamingFromPlayer(force: true);
+
+        OnDimensionChanged?.Invoke(newId);
+    }
+
+    private void RefreshActiveDimension()
+    {
+        _generator = dimensionRegistry.ActiveGenerator;
+        _passes    = dimensionRegistry.ActivePasses ?? new List<IGenerationPass>();
+        _settings  = dimensionRegistry.ActiveProfile?.worldSettings;
+
+        if (_settings == null)
+            Debug.LogWarning("[VoxelWorldManagerExtended] Active dimension has no VoxelWorldSettings!");
         else
+            _settings.blockRegistry?.Initialize();
+    }
+
+    // ── Streaming (identical logic to VoxelWorldManager) ─────────────────────
+
+    private void UpdateStreamingFromPlayer(bool force)
+    {
+        if (_settings == null || playerTransform == null) return;
+
+        Vector2Int playerChunkCoord = WorldToChunkCoord(playerTransform.position);
+        if (!force && playerChunkCoord == _lastPlayerChunkCoord) return;
+        _lastPlayerChunkCoord = playerChunkCoord;
+
+        int range = _settings.viewDistanceInChunks;
+        var desired = new HashSet<Vector2Int>();
+
+        for (int cx = -range; cx <= range; cx++)
+        for (int cz = -range; cz <= range; cz++)
+            desired.Add(playerChunkCoord + new Vector2Int(cx, cz));
+
+        var toUnload = new List<Vector2Int>();
+        foreach (var coord in _activeChunks.Keys)
+            if (!desired.Contains(coord)) toUnload.Add(coord);
+        foreach (var coord in toUnload) UnloadChunk(coord);
+
+        foreach (var coord in desired)
+            if (!_activeChunks.ContainsKey(coord)) LoadChunk(coord);
+    }
+
+    // ── Chunk load / unload ───────────────────────────────────────────────────
+
+    private void LoadChunk(Vector2Int coord)
+    {
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
         {
-            if (cellUIInstance != null) cellUIInstance.SetActive(false);
-        }
-    }
-}
+            data = new VoxelChunkData(coord, _settings.chunkWidth, _settings.chunkHeight);
 
+            // 1. Base generation
+            if (_generator != null)
+                _generator.Generate(data, _settings, _seed);
 
-==========================================
-SCRIPT: GridInteractorExample.cs
-==========================================
-using UnityEngine;
-
-public class GridInteractor : MonoBehaviour
-{
-    [Header("Referências")]
-    [Tooltip("Arraste o objeto que contém o script GridSystem aqui.")]
-    public GridSystem gridSystem;
-    
-    [Tooltip("A câmera usada para atirar o raio. Geralmente a Main Camera.")]
-    public Camera playerCamera;
-
-    [Header("Configurações de Interação")]
-    [Tooltip("Distância máxima que o raio alcançará em metros.")]
-    public float maxInteractDistance = 5f;
-    
-    [Tooltip("Quais camadas (Layers) o raio pode atingir?")]
-    public LayerMask interactableLayer = Physics.DefaultRaycastLayers;
-
-    void Update()
-    {
-        // Verifica se o botão esquerdo do mouse foi clicado
-        if (Input.GetMouseButtonDown(0))
-        {
-            //PerformGridRaycast();
-        }
-    }
-
-    private void PerformGridRaycast()
-    {
-        // Proteção contra referências nulas
-        if (playerCamera == null || gridSystem == null)
-        {
-            Debug.LogWarning("GridInteractor: Câmera ou GridSystem não estão referenciados!");
-            return;
-        }
-
-        // Cria um raio que sai da câmera na direção do ponteiro do mouse
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-
-        // Atira o raio com o limite de distância especificado
-        if (Physics.Raycast(ray, out hit, maxInteractDistance, interactableLayer))
-        {
-            // 1. Aplica a Tolerância de Ponto Flutuante (Epsilon)
-            Vector3 placementPosition = hit.point + (hit.normal * 0.01f);
-
-            // 2. Converte o ponto exato do mundo para o índice discreto do Grid
-            Vector3Int gridIndex = gridSystem.WorldToGridPosition(placementPosition);
-
-            // 3. (Opcional) Pega o centro exato da célula para instanciar algo depois
-            // Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
-
-            // Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}. Centro Mundial: {cellCenterWorldPosition}");
-            Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}");
-            // Aqui você chamará o gridSystem.GetOrCreateCell() futuramente para salvar dados.
-        }
-    }
-}
-
-
-==========================================
-SCRIPT: GridSystem.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
-
-public class GridCell
-{
-    public Vector3Int GridPosition;
-    public bool IsOccupied;
-    public GameObject OccupyingObject; 
-
-    public void Occupy(GameObject obj)
-    {
-        OccupyingObject = obj;
-        IsOccupied = true;
-    }
-
-    public void Clear()
-    {    
-        GameObject.Destroy(OccupyingObject);
-        OccupyingObject = null;
-        IsOccupied = false;
-    }
-}
-
-public class GridSystem : MonoBehaviour
-{
-    [Header("Configurações Básicas")]
-    public float cellSize = 1f;
-    public Vector3 gridOffset = Vector3.zero;
-    
-    [Header("Configurações de Alinhamento")]
-    public bool snapToCenter = true; // Se true, alinha ao centro. Se false, alinha ao canto (0,0,0).
-
-    [Header("Visualização (Gizmos)")]
-    public bool showGizmos = true;
-    public int visualRange = 5;
-
-    private Dictionary<Vector3Int, GridCell> gridMap = new Dictionary<Vector3Int, GridCell>();
-
-    public Vector3Int WorldToGridPosition(Vector3 worldPosition)
-    {
-        int x = Mathf.FloorToInt((worldPosition.x - gridOffset.x) / cellSize);
-        int y = Mathf.FloorToInt((worldPosition.y - gridOffset.y) / cellSize);
-        int z = Mathf.FloorToInt((worldPosition.z - gridOffset.z) / cellSize);
-        
-        return new Vector3Int(x, y, z);
-    }
-
-    public Vector3 GridToWorldPosition(Vector3Int gridPosition)
-    {
-        // Se snapToCenter for true, adicionamos metade da célula para centralizar.
-        float offset = snapToCenter ? (cellSize / 2f) : 0f;
-
-        return new Vector3(
-            (gridPosition.x * cellSize) + offset,
-            (gridPosition.y * cellSize) + offset,
-            (gridPosition.z * cellSize) + offset
-        ) + gridOffset;
-    }
-
-    public GridCell GetOrCreateCell(Vector3 worldPosition)
-    {
-        Vector3Int gridPos = WorldToGridPosition(worldPosition);
-
-        if (!gridMap.ContainsKey(gridPos))
-        {
-            gridMap[gridPos] = new GridCell { GridPosition = gridPos, IsOccupied = false };
-        }
-
-        return gridMap[gridPos];
-    }
-
-    // Nova função para verificar disponibilidade
-    public bool IsCellOccupied(Vector3Int gridPos)
-    {
-        if (gridMap.TryGetValue(gridPos, out GridCell cell))
-        {
-            return cell.IsOccupied;
-        }
-        return false;
-    }
-
-    public void PlaceObjectInCell(Vector3Int gridPos, GameObject obj)
-    {
-        GridCell cell = GetOrCreateCell(GridToWorldPosition(gridPos));
-        cell.Occupy(obj);
-    }
-
-    public void RemoveObjectFromCell(Vector3Int gridPos)
-    {
-        if (gridMap.TryGetValue(gridPos, out GridCell cell))
-        {
-            cell.Clear();
-        }
-    }
-
-    //Other testing methods (not used in main logic, but can be useful for debugging)
-    public List<Vector3Int> GetRandomGridPositionsInTheWorld(int count)
-    {
-        List<Vector3Int> positions = new List<Vector3Int>();
-
-        for (int i = 0; i < count; i++)
-        {
-            int x = Random.Range(-visualRange, visualRange + 1);
-            int y = Random.Range(-visualRange, visualRange + 1);
-            int z = Random.Range(-visualRange, visualRange + 1);
-            positions.Add(new Vector3Int(x, y, z));
-        }
-
-        return positions;
-    }
-
-    private void OnDrawGizmos()
-    {
-        if (!showGizmos) return;
-
-        Gizmos.color = new Color(0.2f, 0.8f, 0.2f, 0.3f);
-
-        for (int x = -visualRange; x <= visualRange; x++)
-        {
-            for (int y = -visualRange; y <= visualRange; y++)
+            // 2. Post-process passes (in order)
+            foreach (var pass in _passes)
             {
-                for (int z = -visualRange; z <= visualRange; z++)
-                {
-                    Vector3Int posIndex = new Vector3Int(x, y, z);
-                    Vector3 worldCenter = GridToWorldPosition(posIndex);
-                    
-                    // Se não estiver centralizado, o centro do Gizmo deve ser ajustado para visualizar corretamente
-                    Vector3 drawPos = snapToCenter ? worldCenter : worldCenter + (Vector3.one * (cellSize / 2f));
-                    
-                    Gizmos.DrawWireCube(drawPos, Vector3.one * cellSize);
-                }
+                pass.Apply(data, _settings, _seed);
+            }
+
+            _chunkDataCache[coord] = data;
+
+            // Notify GridSystem about occupied cells in this chunk
+            if (gridSystem != null)
+                NotifyGridSystemForChunk(data);
+        }
+
+        VoxelChunk chunk = GetOrCreateChunkObject();
+        chunk.gameObject.SetActive(true);
+        chunk.SetData(data, _settings, _settings.chunkMaterial);
+        _activeChunks[coord] = chunk;
+        EnqueueRebuild(coord);
+    }
+
+    private void UnloadChunk(Vector2Int coord)
+    {
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return;
+        chunk.Reset();
+        chunk.gameObject.SetActive(false);
+        _pool.Enqueue(chunk);
+        _activeChunks.Remove(coord);
+    }
+
+    // ── GridSystem bridge ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// After generating a chunk, marks every solid block as an occupied
+    /// GridCell so the GridSystem stays in sync with voxel world state.
+    /// Only runs if gridSystem is assigned.
+    /// </summary>
+    private void NotifyGridSystemForChunk(VoxelChunkData data)
+    {
+        for (int lx = 0; lx < data.Width;  lx++)
+        for (int ly = 0; ly < data.Height; ly++)
+        for (int lz = 0; lz < data.Width;  lz++)
+        {
+            byte id = data.GetBlock(lx, ly, lz);
+            if (_settings.blockRegistry.IsSolid(id))
+            {
+                int wx = data.WorldOriginX + lx;
+                int wy = _settings.LocalYToWorld(ly);
+                int wz = data.WorldOriginZ + lz;
+                gridSystem.PlaceObjectInCell(new Vector3Int(wx, wy, wz), null);
             }
         }
     }
-}
 
+    // ── Rebuild queue ─────────────────────────────────────────────────────────
 
-==========================================
-SCRIPT: Button.cs
-==========================================
-using UnityEngine;
-
-public class Button : MonoBehaviour, IInteractable
-{
-    private DebugLabel debugLabel;
-
-    private void Start()
+    private void ProcessRebuildQueue()
     {
-        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
-    }
+        if (_settings == null) return;
+        int budget    = _settings.maxChunkBuildsPerFrame;
+        int processed = 0;
 
-    public string GetInteractionLabel()
-    {
-        return "Press Button";
-    }
-
-    public void Interact()
-    {
-        debugLabel.Flash("Boop!");
-    }
-}
-
-
-
-==========================================
-SCRIPT: IInteractable.cs
-==========================================
-using UnityEngine;
-
-public interface IInteractable
-{
-    string GetInteractionLabel(); // "Open Chest", "Use Furnace", etc.
-    void Interact();
-}
-
-/*
-How specific behaviours implement it independently:
-
-//ChestInteraction.cs
-public class ChestInteraction : MonoBehaviour, IInteractable
-{
-    public string GetInteractionLabel() => "Open Chest";
-    public void Interact() { // open chest UI // }
-}
-
-// FurnaceInteraction.cs
-public class FurnaceInteraction : MonoBehaviour, IInteractable
-{
-    public string GetInteractionLabel() => "Use Furnace";
-    public void Interact() { // open smelting UI // }
-}
-*/
-
-
-/*
-Distinguishing Interactable vs Non-Interactable items
-
-// PlacedItem.cs — add this
-public bool IsInteractable => GetComponent<IInteractable>() != null;
-public IInteractable GetInteractable() => GetComponent<IInteractable>();
-
-The Minecraft way — the chest prefab already has ChestInteraction on it.
-No runtime AddComponent juggling. The itemPrefab in ItemData simply has
-the right components baked in.
-
-*/
-
-
-==========================================
-SCRIPT: DefaultLoadoutSource.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
-
-[CreateAssetMenu(fileName = "DefaultLoadout", menuName = "Inventory/Default Loadout Source")]
-public class DefaultLoadoutSource : ScriptableObject, IItemGrantSource
-{
-    [SerializeField] private List<ItemGrant> defaultItems;
-
-    public int Priority => 100; // Lowest priority — fallback only
-    public bool IsAvailable() => defaultItems != null && defaultItems.Count > 0;
-    public IEnumerable<ItemGrant> GetItemGrants() => defaultItems;
-}
-
-
-==========================================
-SCRIPT: IItemGrantSource.cs
-==========================================
-using System.Collections.Generic;
-
-public interface IItemGrantSource
-{
-    // Lower number = higher priority (save data should be 0, defaults last)
-    int Priority { get; }
-    bool IsAvailable();
-    IEnumerable<ItemGrant> GetItemGrants();
-}
-
-[System.Serializable]
-public struct ItemGrant
-{
-    public ItemData item;
-    public int amount;
-}
-
-
-==========================================
-SCRIPT: InventoryManager.cs
-==========================================
-using System.Collections.Generic;
-using System.ComponentModel;
-using UnityEngine;
-
-[System.Serializable]
-public class InventorySlot
-{
-    public ItemStack itemStack;
-    public int slotID;
-}
-
-public class InventoryManager : MonoBehaviour
-{
-    [SerializeField] private InventoryUI inventoryUI;
-    [SerializeField] private int inventorySize = 10;
-    private int currentSelectedSlot = 0;
-    [SerializeField] private ItemData selectedItem;
-    private List<InventorySlot> slots;
-    
-    public void InitializeInventoryBar()
-    {
-        slots = new List<InventorySlot>();
-
-        for (int i = 0; i < inventorySize; i++)
+        while (_rebuildQueue.Count > 0 && processed < budget)
         {
-            slots.Add(new InventorySlot { slotID = i, itemStack = null });
-            inventoryUI.CreateBarSlotUI(i, null);
+            Vector2Int coord = _rebuildQueue.Dequeue();
+            if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) continue;
+            if (chunk.Data == null) continue;
+
+            MeshData meshData = VoxelMeshBuilder.Build(chunk.Data, _settings, this);
+            chunk.ApplyMesh(meshData);
+            processed++;
+        }
+    }
+
+    // ── Coordinate helpers ────────────────────────────────────────────────────
+
+    private Vector2Int WorldToChunkCoord(Vector3 worldPos)
+    {
+        int cx = Mathf.FloorToInt(worldPos.x / _settings.chunkWidth);
+        int cz = Mathf.FloorToInt(worldPos.z / _settings.chunkWidth);
+        return new Vector2Int(cx, cz);
+    }
+
+    private Vector2Int BlockToChunkCoord(int wx, int wz)
+    {
+        int cx = Mathf.FloorToInt((float)wx / _settings.chunkWidth);
+        int cz = Mathf.FloorToInt((float)wz / _settings.chunkWidth);
+        return new Vector2Int(cx, cz);
+    }
+
+    private VoxelChunk GetOrCreateChunkObject()
+    {
+        if (_pool.Count > 0) return _pool.Dequeue();
+        GameObject go = Instantiate(chunkPrefab, transform);
+        return go.GetComponent<VoxelChunk>();
+    }
+
+    private void EnqueueRebuildIfActive(Vector2Int coord)
+    {
+        if (_activeChunks.ContainsKey(coord)) EnqueueRebuild(coord);
+    }
+}
+
+
+
+==========================================
+SCRIPT: WorldGenDebugOverlay.cs
+==========================================
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  WorldGenDebugOverlay  —  Runtime GUI overlay for quick debugging.
+//
+//  Shows:
+//    · Active dimension ID
+//    · Active generator type
+//    · Number of active passes
+//    · Seed
+//    · Player chunk coordinate
+//
+//  ENABLE / DISABLE
+//  Attach to any GameObject.  Toggle showOverlay in the Inspector.
+//  The overlay only draws in Play mode (runtime).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class WorldGenDebugOverlay : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private VoxelWorldManagerExtended worldManager;
+    [SerializeField] private DimensionRegistry         dimensionRegistry;
+    [SerializeField] private Transform                 playerTransform;
+
+    [Header("Display")]
+    public bool showOverlay = true;
+
+    [Tooltip("Screen-space position of the overlay box (pixels from top-left).")]
+    public Vector2 overlayPosition = new Vector2(10, 10);
+
+    private GUIStyle _style;
+
+    private void OnGUI()
+    {
+        if (!showOverlay || worldManager == null) return;
+
+        _style ??= new GUIStyle(GUI.skin.box)
+        {
+            fontSize  = 13,
+            alignment = TextAnchor.UpperLeft,
+            padding   = new RectOffset(8, 8, 6, 6),
+        };
+        _style.normal.textColor = Color.white;
+
+        DimensionProfile profile = dimensionRegistry?.ActiveProfile;
+        IWorldGenerator  gen     = dimensionRegistry?.ActiveGenerator;
+        int              passes  = dimensionRegistry?.ActivePasses?.Count ?? 0;
+
+        Vector2Int playerChunk = Vector2Int.zero;
+        if (playerTransform != null && profile?.worldSettings != null)
+        {
+            int cw = profile.worldSettings.chunkWidth;
+            playerChunk = new Vector2Int(
+                Mathf.FloorToInt(playerTransform.position.x / cw),
+                Mathf.FloorToInt(playerTransform.position.z / cw));
         }
 
-        SelectSlot(currentSelectedSlot);
-        // Pass -1 as old slot since there's nothing to deselect yet
-        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, -1);
+        string text =
+            $"── WorldGen Debug ──\n" +
+            $"Dimension : {profile?.dimensionId ?? "none"}\n" +
+            $"Display   : {profile?.displayName ?? "-"}\n" +
+            $"Generator : {gen?.GetType().Name ?? "null"}\n" +
+            $"Passes    : {passes}\n" +
+            $"Chunk     : {playerChunk}\n";
 
-        Debug.Log($"Inventário inicializado com {slots.Count} slots.");
-    }
+        Vector2 size = _style.CalcSize(new GUIContent(text));
+        size.x += 20;
+        size.y += 10;
 
-    public void ChangeCurrentSelectedSlot(int value)
-    {
-        int oldSelectedSlotID = currentSelectedSlot;
-        currentSelectedSlot = Mathf.Clamp(value, 0, slots.Count - 1);
+        GUI.Box(new Rect(overlayPosition.x, overlayPosition.y, size.x, size.y), text, _style);
 
-        if (currentSelectedSlot == oldSelectedSlotID) return;
+        // ── Dimension switch buttons (editor-only convenience) ────────────────
+#if UNITY_EDITOR
+        if (dimensionRegistry == null) return;
+        float btnY = overlayPosition.y + size.y + 4;
+        float btnX = overlayPosition.x;
 
-        SelectSlot(currentSelectedSlot);
-        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, oldSelectedSlotID);
-    }
-
-    // Handles data update only — UI highlight is handled by the caller
-    private void SelectSlot(int slotIndex)
-    {
-        selectedItem = slots[slotIndex].itemStack?.itemData;
-
-        //Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
-    }
-
-    public bool TryAddItem(ItemData item, int amount)
-    {
-        int slotIndex = FindAvailableSlotOfType(item);
-    
-        if (slotIndex == -1)
+        foreach (string id in dimensionRegistry.GetAllIds())
         {
-            Debug.Log("Inventário cheio!");
+            bool isActive = id == worldManager.ActiveDimensionId;
+            Color prev = GUI.backgroundColor;
+            GUI.backgroundColor = isActive ? Color.green : Color.gray;
+
+            if (GUI.Button(new Rect(btnX, btnY, 140, 22), id))
+                worldManager.SwitchDimension(id);
+
+            GUI.backgroundColor = prev;
+            btnX += 148;
+        }
+#endif
+    }
+}
+
+
+
+==========================================
+SCRIPT: WorldGenNoiseUtils.cs
+==========================================
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  WorldGenNoiseUtils  —  Shared, thread-safe noise helpers for all generators.
+//
+//  All methods are pure static and use only Mathf.PerlinNoise, which is
+//  documented as safe to call from worker threads as of Unity 2021+.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public static class WorldGenNoiseUtils
+{
+    // ── Fractional Brownian Motion (fBm) ──────────────────────────────────────
+
+    /// <summary>
+    /// Returns a value in [0, 1] by layering <paramref name="octaves"/> of
+    /// Perlin noise with increasing frequency and decreasing amplitude.
+    /// </summary>
+    public static float FBM(
+        float x, float z,
+        float offsetX, float offsetZ,
+        float scale,
+        int   octaves,
+        float persistence,
+        float lacunarity)
+    {
+        float amplitude = 1f;
+        float frequency = 1f;
+        float value     = 0f;
+        float maxValue  = 0f;
+
+        for (int o = 0; o < octaves; o++)
+        {
+            float sx = (x + offsetX) / scale * frequency;
+            float sz = (z + offsetZ) / scale * frequency;
+
+            value    += Mathf.PerlinNoise(sx, sz) * amplitude;
+            maxValue += amplitude;
+
+            amplitude *= persistence;
+            frequency *= lacunarity;
+        }
+
+        return value / maxValue;
+    }
+
+    // ── 2D Value Noise ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Single-octave Perlin sample, seeded via offset.
+    /// Useful for per-room variation (width, height, etc.).
+    /// </summary>
+    public static float Sample2D(float x, float z, float offsetX, float offsetZ, float scale)
+        => Mathf.PerlinNoise((x + offsetX) / scale, (z + offsetZ) / scale);
+
+    // ── 3D Pseudo-Noise via two 2D samples ───────────────────────────────────
+
+    /// <summary>
+    /// Approximates 3D noise by adding two perpendicular 2D samples.
+    /// Fast enough for cave/carver passes.
+    /// </summary>
+    public static float Sample3D(float x, float y, float z, float offsetX, float offsetZ, float scale)
+    {
+        float a = Mathf.PerlinNoise((x + offsetX) / scale, y / scale);
+        float b = Mathf.PerlinNoise(y / scale, (z + offsetZ) / scale);
+        return (a + b) * 0.5f;
+    }
+
+    // ── Seeded offset helpers ─────────────────────────────────────────────────
+
+    /// <summary>Generates a repeatable float offset from a seed + channel index.</summary>
+    public static float SeedOffset(int seed, int channel = 0)
+        => (seed * 0.1f) + (channel * 1000.73f);
+
+    /// <summary>Generates a repeatable integer from seed + extra hash input.</summary>
+    public static int HashInts(int a, int b, int seed)
+    {
+        unchecked
+        {
+            int h = seed;
+            h ^= a * 374761393;
+            h ^= b * 668265263;
+            h = (h ^ (h >> 13)) * 1274126177;
+            return h ^ (h >> 16);
+        }
+    }
+
+    /// <summary>Maps a hash to [0, 1].</summary>
+    public static float HashToFloat(int a, int b, int seed)
+        => (HashInts(a, b, seed) & 0x7FFFFFFF) / (float)0x7FFFFFFF;
+
+    /// <summary>Maps a hash to [min, max].</summary>
+    public static float HashToRange(int a, int b, int seed, float min, float max)
+        => Mathf.Lerp(min, max, HashToFloat(a, b, seed));
+
+    /// <summary>Maps a hash to an integer in [min, max] inclusive.</summary>
+    public static int HashToInt(int a, int b, int seed, int min, int max)
+        => min + Mathf.Abs(HashInts(a, b, seed)) % (max - min + 1);
+}
+
+
+
+==========================================
+SCRIPT: DimensionProfile.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DimensionProfile  —  ScriptableObject that fully describes one world dimension.
+//
+//  WHAT IS A DIMENSION?
+//  Exactly one DimensionProfile is active at any given time.
+//  Switching dimensions = swapping which profile VoxelWorldManager references.
+//  This mirrors how Minecraft handles the Overworld / Nether / End:
+//  same engine, different data.
+//
+//  WHAT DOES IT HOLD?
+//  · dimensionId     — unique string key (e.g. "overworld", "backrooms_level0")
+//  · worldSettings   — VoxelWorldSettings SO (chunk size, height range, material…)
+//  · generatorAsset  — a BaseWorldGeneratorAsset SO that instantiates the IWorldGenerator
+//  · passes          — ordered list of BaseGenerationPassAsset SOs (post-process steps)
+//
+//  HOW TO CREATE ONE
+//  Assets > Create > WorldGen > Dimension Profile
+//
+//  HOW TO REGISTER / SWITCH
+//  See DimensionRegistry.  Call DimensionRegistry.SetActiveDimension(id) from
+//  any gameplay code (portal triggers, menu, cheat console, etc.).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(fileName = "DimensionProfile_New", menuName = "WorldGen/Dimension Profile")]
+public class DimensionProfile : ScriptableObject
+{
+    // ── Identity ──────────────────────────────────────────────────────────────
+
+    [Header("Identity")]
+    [Tooltip("Unique string key for this dimension.  Must not contain spaces.  " +
+             "Used by DimensionRegistry and save-data.  Examples: 'overworld', 'backrooms_level0'.")]
+    public string dimensionId = "overworld";
+
+    [Tooltip("Display name shown in UI / debug overlays.")]
+    public string displayName = "Overworld";
+
+    // ── Core Settings ─────────────────────────────────────────────────────────
+
+    [Header("Core Settings")]
+    [Tooltip("VoxelWorldSettings asset shared by this dimension.  " +
+             "Can be shared across dimensions or unique per dimension.")]
+    public VoxelWorldSettings worldSettings;
+
+    // ── Generator ─────────────────────────────────────────────────────────────
+
+    [Header("Generator")]
+    [Tooltip("Determines the base terrain generation strategy for this dimension.  " +
+             "Assign any BaseWorldGeneratorAsset subclass (OverworldGeneratorAsset, " +
+             "BackroomsGeneratorAsset, etc.).")]
+    public BaseWorldGeneratorAsset generatorAsset;
+
+    // ── Post-Process Passes ───────────────────────────────────────────────────
+
+    [Header("Post-Process Passes (applied in order after the generator)")]
+    [Tooltip("Each entry is a BaseGenerationPassAsset SO.  Passes run top-to-bottom " +
+             "on every freshly generated chunk before meshing.  Add, remove, or " +
+             "reorder without touching any generator code.")]
+    public List<BaseGenerationPassAsset> passes = new();
+
+    // ── Spawn / Spawn Options ─────────────────────────────────────────────────
+
+    [Header("Player Spawn")]
+    [Tooltip("Where the player is placed when entering this dimension for the first time.")]
+    public Vector3 defaultSpawnPosition = new Vector3(0.5f, 5f, 0.5f);
+
+    // ── Runtime helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Instantiates the IWorldGenerator from the assigned generatorAsset.
+    /// Returns null (with a log warning) if no asset is assigned.
+    /// </summary>
+    public IWorldGenerator CreateGenerator()
+    {
+        if (generatorAsset == null)
+        {
+            Debug.LogWarning($"[DimensionProfile '{dimensionId}'] No generatorAsset assigned. " +
+                             "Chunks will be empty.");
+            return null;
+        }
+        return generatorAsset.CreateGenerator();
+    }
+
+    /// <summary>
+    /// Creates and returns the ordered list of IGenerationPass instances
+    /// from the assigned pass assets.  Null assets are skipped with a warning.
+    /// </summary>
+    public List<IGenerationPass> CreatePasses()
+    {
+        var result = new List<IGenerationPass>(passes.Count);
+        for (int i = 0; i < passes.Count; i++)
+        {
+            if (passes[i] == null)
+            {
+                Debug.LogWarning($"[DimensionProfile '{dimensionId}'] passes[{i}] is null. Skipping.");
+                continue;
+            }
+            IGenerationPass pass = passes[i].CreatePass();
+            if (pass != null) result.Add(pass);
+        }
+        return result;
+    }
+}
+
+
+
+==========================================
+SCRIPT: DimensionRegistry.cs
+==========================================
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DimensionRegistry  —  Central catalogue of all registered DimensionProfile SOs.
+//
+//  USAGE
+//  1. Create a DimensionRegistry asset via
+//     Assets > Create > WorldGen > Dimension Registry
+//  2. Drag your DimensionProfile assets into the `dimensions` list.
+//  3. Assign the DimensionRegistry to VoxelWorldManagerExtended in the Inspector.
+//  4. Call DimensionRegistry.SetActiveDimension("backrooms_level0") from any
+//     gameplay code (portal triggers, menus, debug consoles, etc.).
+//
+//  SWITCHING DIMENSIONS
+//  · Call SetActiveDimension(id).
+//  · VoxelWorldManagerExtended listens to OnDimensionChanged and flushes all
+//    cached chunk data before reloading with the new generator + passes.
+//  · The player is teleported to DimensionProfile.defaultSpawnPosition.
+//
+//  THREAD SAFETY
+//  · All writes happen on the main thread (triggered by gameplay events).
+//  · ActiveProfile / ActiveGenerator / ActivePasses are read-only at generation
+//    time and are never written during a frame that is also generating chunks.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(fileName = "DimensionRegistry", menuName = "WorldGen/Dimension Registry")]
+public class DimensionRegistry : ScriptableObject
+{
+    // ── Inspector ─────────────────────────────────────────────────────────────
+
+    [Header("Registered Dimensions (order = fallback priority)")]
+    [Tooltip("All DimensionProfile assets known to this game.  " +
+             "The first entry is loaded on startup unless overridden.")]
+    public List<DimensionProfile> dimensions = new();
+
+    [Header("Startup Dimension")]
+    [Tooltip("ID of the dimension loaded when the scene first starts.  " +
+             "Leave blank to use the first entry in the list.")]
+    public string startingDimensionId = "";
+
+    // ── Runtime state ─────────────────────────────────────────────────────────
+
+    private Dictionary<string, DimensionProfile> _lookup;
+
+    /// <summary>Currently active dimension profile.</summary>
+    public DimensionProfile ActiveProfile { get; private set; }
+
+    /// <summary>Generator instance for the active dimension.</summary>
+    public IWorldGenerator ActiveGenerator { get; private set; }
+
+    /// <summary>Pass instances for the active dimension (in order).</summary>
+    public List<IGenerationPass> ActivePasses { get; private set; } = new();
+
+    // ── Events ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fired on the main thread when a new dimension becomes active.
+    /// VoxelWorldManagerExtended subscribes to this to flush and reload chunks.
+    /// </summary>
+    public event Action<DimensionProfile> OnDimensionChanged;
+
+    // ── Initialisation ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Must be called once from VoxelWorldManagerExtended.Awake().
+    /// Builds the lookup dictionary and activates the starting dimension.
+    /// </summary>
+    public void Initialize()
+    {
+        _lookup = new Dictionary<string, DimensionProfile>(dimensions.Count);
+
+        foreach (var profile in dimensions)
+        {
+            if (profile == null) continue;
+
+            if (_lookup.ContainsKey(profile.dimensionId))
+            {
+                Debug.LogWarning($"[DimensionRegistry] Duplicate dimensionId '{profile.dimensionId}'.  " +
+                                 "Only the first entry is used.");
+                continue;
+            }
+            _lookup[profile.dimensionId] = profile;
+        }
+
+        if (_lookup.Count == 0)
+        {
+            Debug.LogError("[DimensionRegistry] No dimensions registered!");
+            return;
+        }
+
+        // Pick starting dimension
+        string startId = string.IsNullOrEmpty(startingDimensionId)
+            ? dimensions[0].dimensionId
+            : startingDimensionId;
+
+        ActivateDimension(startId, fireEvent: false);
+
+        Debug.Log($"[DimensionRegistry] Initialized with {_lookup.Count} dimension(s).  " +
+                  $"Active: '{ActiveProfile?.dimensionId}'.");
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Switches the active dimension.  Fires OnDimensionChanged so
+    /// VoxelWorldManagerExtended can flush and reload the world.
+    /// Safe to call from any gameplay code on the main thread.
+    /// </summary>
+    /// <param name="id">dimensionId of the target DimensionProfile.</param>
+    /// <returns>True if the switch succeeded, false if the id was not found.</returns>
+    public bool SetActiveDimension(string id)
+    {
+        if (ActiveProfile != null && ActiveProfile.dimensionId == id)
+        {
+            Debug.Log($"[DimensionRegistry] Dimension '{id}' is already active.");
+            return true;
+        }
+
+        return ActivateDimension(id, fireEvent: true);
+    }
+
+    /// <summary>Returns the DimensionProfile for <paramref name="id"/>, or null.</summary>
+    public DimensionProfile GetProfile(string id)
+    {
+        _lookup.TryGetValue(id, out var profile);
+        return profile;
+    }
+
+    /// <summary>Returns all registered dimension IDs.</summary>
+    public IEnumerable<string> GetAllIds()
+    {
+        if (_lookup == null) yield break;
+        foreach (var key in _lookup.Keys) yield return key;
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────────
+
+    private bool ActivateDimension(string id, bool fireEvent)
+    {
+        if (_lookup == null || !_lookup.TryGetValue(id, out var profile))
+        {
+            Debug.LogError($"[DimensionRegistry] Unknown dimension id '{id}'.");
             return false;
         }
 
-        InventorySlot targetSlot = slots[slotIndex];
+        ActiveProfile   = profile;
+        ActiveGenerator = profile.CreateGenerator();
+        ActivePasses    = profile.CreatePasses();
 
-        if (targetSlot.itemStack == null)
-        {
-            // Cria um novo stack no slot vazio
-            targetSlot.itemStack = new ItemStack(item, amount);
-        }
-        else
-        {
-            // Aumenta a quantidade do item existente
-            targetSlot.itemStack.amount += amount;
-        }
-    
-        // NOVO: Avisa a UI para atualizar o desenho do slot na tela
-        inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
+        Debug.Log($"[DimensionRegistry] Activated dimension '{id}'  " +
+                  $"(generator: {ActiveGenerator?.GetType().Name ?? "null"}, " +
+                  $"passes: {ActivePasses.Count}).");
 
-        //Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
+        if (fireEvent) OnDimensionChanged?.Invoke(profile);
         return true;
     }
-
-    private int FindAvailableSlotOfType(ItemData item)
-    {
-        foreach (var slot in slots)
-        {
-            var stack = slot.itemStack;
-            bool canStack = stack != null && 
-                            stack.itemData == item && 
-                            stack.amount < item.maxStackAmount;
-
-            if (canStack) return slot.slotID;
-        }
-
-        foreach (var slot in slots)
-        {
-            if (slot.itemStack == null) return slot.slotID;
-        }
-
-        return -1; 
-    }
-
-    public ItemData GetSelectedItem()
-    {
-        return selectedItem;
-    }
-
-    public void RefreshSelectedSlot()
-    {
-        SelectSlot(currentSelectedSlot);
-    }
-
-    public List<InventorySlot> GetSlots() => slots;
-    
 }
 
 
 
 ==========================================
-SCRIPT: InventorySaveService.cs
+SCRIPT: BackroomsGeneratorAsset.cs
 ==========================================
 using System.Collections.Generic;
 using UnityEngine;
 
-public class InventorySaveService : MonoBehaviour, IItemGrantSource
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BackroomsGeneratorAsset  —  Inspector-configurable generator that produces
+//  an infinite liminal Backrooms world from a set of structure configs.
+//
+//  KEY DECISIONS
+//  · Every field is documented and tunable without touching code.
+//  · Structure configs are a plain List<BackroomsStructureConfig> — add new
+//    types (offices, pool rooms, parking garages…) by creating new
+//    BackroomsStructureConfig SOs and appending them here.
+//  · solidFillBlockId determines the material of the "void" between rooms
+//    (should be same as your wall block for a seamless look, or a different
+//    dark block for a cave-like feel).
+//
+//  RECOMMENDED BLOCK IDS (create matching VoxelBlockType SOs):
+//    0  = Air
+//    10 = BackroomsFloor   (yellow carpet / linoleum tile texture)
+//    11 = BackroomsCeiling (drop-ceiling / fluorescent panel texture)
+//    12 = BackroomsWall    (yellow wallpaper texture)
+//    13 = BackroomsPillar  (concrete column texture)
+//    14 = BackroomsVoid    (completely dark / pitch black — optional)
+//
+//  Create via: Assets > Create > WorldGen > Generators > Backrooms
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(
+    fileName = "BackroomsGeneratorAsset",
+    menuName = "WorldGen/Generators/Backrooms")]
+public class BackroomsGeneratorAsset : BaseWorldGeneratorAsset
 {
-    private const string SaveKey = "inventory_save";
+    // ── Structure Pool ────────────────────────────────────────────────────────
 
-    public int Priority => 0; // Highest priority — save data wins
-    public bool IsAvailable() => PlayerPrefs.HasKey(SaveKey);
+    [Header("Structure Pool")]
+    [Tooltip("All structure types that can appear in this Backrooms level.  " +
+             "Each entry carries its own spawnWeight.  Add more for variety.")]
+    public List<BackroomsStructureConfig> structureConfigs = new();
 
-    public IEnumerable<ItemGrant> GetItemGrants()
+    // ── Block IDs ─────────────────────────────────────────────────────────────
+
+    [Header("Block IDs")]
+    [Tooltip("Block used to fill all space that is NOT carved out as a structure.  " +
+             "Typically the same as wallBlockId on your structure configs.")]
+    public byte solidFillBlockId = 12;
+
+    // ── Generator creation ────────────────────────────────────────────────────
+
+    public override IWorldGenerator CreateGenerator()
+        => new BackroomsGenerator(structureConfigs, solidFillBlockId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// IWorldGenerator implementation for the Backrooms.
+/// Holds a reference to the structure config list (read-only at generation time).
+/// </summary>
+public sealed class BackroomsGenerator : IWorldGenerator
+{
+    private readonly List<BackroomsStructureConfig> _configs;
+    private readonly byte _solidFillId;
+
+    public BackroomsGenerator(List<BackroomsStructureConfig> configs, byte solidFillId)
     {
-        string json = PlayerPrefs.GetString(SaveKey);
-        var saveData = JsonUtility.FromJson<InventorySaveData>(json);
-        return saveData?.grants ?? new List<ItemGrant>();
+        _configs     = configs;
+        _solidFillId = solidFillId;
     }
 
-    public void Save(List<InventorySlot> slots)
+    public void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed)
     {
-        var grants = new List<ItemGrant>();
-        foreach (var slot in slots)
-        {
-            if (slot.itemStack != null)
-                grants.Add(new ItemGrant { item = slot.itemStack.itemData, amount = slot.itemStack.amount });
-        }
-
-        string json = JsonUtility.ToJson(new InventorySaveData { grants = grants });
-        PlayerPrefs.SetString(SaveKey, json);
-        PlayerPrefs.Save();
+        BackroomsLayout.Generate(data, settings, _configs, seed, _solidFillId);
     }
-
-    public void ClearSave() => PlayerPrefs.DeleteKey(SaveKey);
-
-    [System.Serializable]
-    private class InventorySaveData { public List<ItemGrant> grants; }
 }
 
 
+
 ==========================================
-SCRIPT: InventoryUI.cs
+SCRIPT: OverworldGeneratorAsset.cs
 ==========================================
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
-public class InventoryUI : MonoBehaviour
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OverworldGeneratorAsset  —  ScriptableObject wrapper for the existing
+//  VoxelTerrainGenerator logic, expressed as an IWorldGenerator.
+//
+//  This DOES NOT modify VoxelTerrainGenerator.cs — it simply calls its
+//  Generate() method.  If you want to override noise parameters per-dimension
+//  (overriding what's in VoxelWorldSettings), you can add fields here and
+//  apply them before calling Generate().
+//
+//  Create via: Assets > Create > WorldGen > Generators > Overworld
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(fileName = "OverworldGeneratorAsset", menuName = "WorldGen/Generators/Overworld")]
+public class OverworldGeneratorAsset : BaseWorldGeneratorAsset
 {
-    [SerializeField] private GameObject InventoryBarUI;
-    [SerializeField] private GameObject slotUIPrefab;
-    [SerializeField] private Transform slotsParent;
+    [Header("Overworld Terrain Overrides (leave at 0 to use VoxelWorldSettings values)")]
+    [Tooltip("Override noise scale.  0 = inherit from VoxelWorldSettings.")]
+    [Range(0f, 200f)] public float noiseScaleOverride = 0f;
 
-    [Header("Sprites de Fundo")]
-    [SerializeField] private Sprite defaultSlotSprite; // Sprite para o fundo normal do slot
-    [SerializeField] private Sprite selectedSlotSprite; // Sprite para o fundo do slot selecionado
-    
-    // Lista para guardar os GameObjects dos slots que aparecem na tela
-    private List<GameObject> slotUIObjects = new List<GameObject>();
-    
-    private void Awake()
+    [Tooltip("Override octave count.  0 = inherit.")]
+    [Range(0, 6)] public int octavesOverride = 0;
+
+    public override IWorldGenerator CreateGenerator()
+        => new OverworldGenerator(noiseScaleOverride, octavesOverride);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Pure IWorldGenerator that delegates directly to VoxelTerrainGenerator.Generate().
+/// Optionally overrides noise parameters from the asset config.
+/// </summary>
+public sealed class OverworldGenerator : IWorldGenerator
+{
+    private readonly float _noiseScaleOverride;
+    private readonly int   _octavesOverride;
+
+    public OverworldGenerator(float noiseScaleOverride, int octavesOverride)
     {
-        InventoryBarUI.SetActive(true);
+        _noiseScaleOverride = noiseScaleOverride;
+        _octavesOverride    = octavesOverride;
     }
 
-    public void CreateBarSlotUI(int slotID, ItemStack itemStack)
+    public void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed)
     {
-        if (slotUIObjects.Count >= 10)
-        {
-            Debug.LogWarning($"Não é possível criar mais de 10 slots. SlotID {slotID} não criado.");
-            return;
-        }
+        // Optionally patch settings with our overrides (non-destructive — we
+        // use local variables rather than mutating the SO)
+        // VoxelTerrainGenerator reads straight from `settings`, so for override
+        // support we either subclass or call Generate with a patched copy.
+        // For simplicity: the overrides are informational here — extend as needed.
+        // The existing generator is fully functional with default VoxelWorldSettings.
+        VoxelTerrainGenerator.Generate(data, settings, seed);
+    }
+}
 
-        GameObject slotUIObj = Instantiate(slotUIPrefab, slotsParent);
-        slotUIObj.name = $"Slot_{slotID}";
-        
-        // Garante que o slot recém-criado começa com o sprite padrão
-        if (slotUIObj.TryGetComponent<Image>(out Image slotBackground))
-        {
-            slotBackground.sprite = defaultSlotSprite;
-        }
 
-        slotUIObjects.Add(slotUIObj);
 
-        UpdateSlotUI(slotID, itemStack);
+==========================================
+SCRIPT: BackroomsConnectorPassAsset.cs
+==========================================
+using UnityEngine;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BackroomsConnectorPassAsset  —  Generation pass that punches guaranteed
+//  doorway openings on every chunk edge, ensuring navigability between chunks.
+//
+//  WHY THIS EXISTS
+//  BackroomsLayout carves structures within a single chunk.  Without any
+//  cross-chunk coordination, neighbouring chunks might generate back-to-back
+//  solid walls, creating impassable barriers.
+//
+//  HOW IT WORKS
+//  After the main generator fills the chunk, this pass:
+//    1. Picks a deterministic X position on the North and South chunk edges.
+//    2. Picks a deterministic Z position on the East and West chunk edges.
+//    3. Carves a doorway (configurable width × height) centred on that position.
+//
+//  CONSISTENCY GUARANTEE
+//  The doorway position on the North edge of chunk (cx, cz) uses the same
+//  hash as the South edge of chunk (cx, cz-1), so openings always align across
+//  chunk boundaries.
+//
+//  Create via: Assets > Create > WorldGen > Passes > Backrooms Connector
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(
+    fileName = "BackroomsConnectorPassAsset",
+    menuName = "WorldGen/Passes/Backrooms Connector")]
+public class BackroomsConnectorPassAsset : BaseGenerationPassAsset
+{
+    [Header("Doorway Dimensions")]
+    [Tooltip("Width of the carved doorway in blocks.")]
+    [Range(1, 6)] public int doorwayWidth  = 2;
+
+    [Tooltip("Height of the carved doorway in blocks (not counting floor/ceiling slabs).")]
+    [Range(1, 5)] public int doorwayHeight = 3;
+
+    [Header("Block IDs")]
+    [Tooltip("Air block ID used when carving the doorway.")]
+    public byte airBlockId = 0;
+
+    [Tooltip("Floor block ID placed at the doorway threshold.")]
+    public byte floorBlockId = 10;
+
+    [Tooltip("Ceiling block ID placed above the doorway.")]
+    public byte ceilingBlockId = 11;
+
+    public override IGenerationPass CreatePass()
+        => new BackroomsConnectorPass(doorwayWidth, doorwayHeight, airBlockId, floorBlockId, ceilingBlockId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+public sealed class BackroomsConnectorPass : IGenerationPass
+{
+    public string PassName => "Backrooms Connector";
+
+    private readonly int  _doorW;
+    private readonly int  _doorH;
+    private readonly byte _airId;
+    private readonly byte _floorId;
+    private readonly byte _ceilId;
+
+    public BackroomsConnectorPass(int doorW, int doorH, byte air, byte floor, byte ceil)
+    {
+        _doorW   = doorW;
+        _doorH   = doorH;
+        _airId   = air;
+        _floorId = floor;
+        _ceilId  = ceil;
     }
 
-    // Método para atualizar o ícone do item (continua igual)
-    public void UpdateSlotUI(int slotID, ItemStack itemStack)
+    public void Apply(VoxelChunkData data, VoxelWorldSettings settings, int seed)
     {
-        if (slotID < 0 || slotID >= slotUIObjects.Count) return;
+        int cx = data.ChunkCoord.x;
+        int cz = data.ChunkCoord.y;
+        int w  = data.Width;
+        int h  = data.Height;
 
-        GameObject slotUIObj = slotUIObjects[slotID];
-        Image iconImage = slotUIObj.transform.GetChild(0).GetComponent<Image>();
+        // ── Doorway Y range ────────────────────────────────────────────────
+        // Place doorway at the floor (local Y = 0)
+        int floorLocalY = 0;
+        int ceilLocalY  = Mathf.Min(floorLocalY + _doorH + 1, h - 1);
 
-        if (itemStack == null || itemStack.itemData == null)
-        {
-            iconImage.sprite = null;
-            iconImage.gameObject.SetActive(false);
-        }
-        else
-        {
-            iconImage.sprite = itemStack.itemData.icon;
-            iconImage.gameObject.SetActive(true);
-        }
+        // ── North edge (lz = 0) ────────────────────────────────────────────
+        // Hash uses (cx, cz-1) for the south edge of the chunk to the north,
+        // so both chunks carve the same X position.
+        int northX = GetDoorwayCenter(cx, cz - 1, seed, channel: 0, maxCenter: w - 1);
+        CarveDoorwayAlongX(data, northX, 0, floorLocalY, ceilLocalY, w);
+
+        // ── South edge (lz = w-1) ─────────────────────────────────────────
+        int southX = GetDoorwayCenter(cx, cz, seed, channel: 0, maxCenter: w - 1);
+        CarveDoorwayAlongX(data, southX, w - 1, floorLocalY, ceilLocalY, w);
+
+        // ── West edge (lx = 0) ────────────────────────────────────────────
+        int westZ = GetDoorwayCenter(cx - 1, cz, seed, channel: 1, maxCenter: w - 1);
+        CarveDoorwayAlongZ(data, 0, westZ, floorLocalY, ceilLocalY, w);
+
+        // ── East edge (lx = w-1) ──────────────────────────────────────────
+        int eastZ = GetDoorwayCenter(cx, cz, seed, channel: 1, maxCenter: w - 1);
+        CarveDoorwayAlongZ(data, w - 1, eastZ, floorLocalY, ceilLocalY, w);
     }
+
+    // ── Deterministic doorway centre ──────────────────────────────────────────
 
     /// <summary>
-    /// Atualiza o sprite de fundo do novo slot selecionado e do slot que foi desmarcado.
+    /// Returns a centre position that is consistent between adjacent chunks.
+    /// Two adjacent chunks query the same (edgeChunkX, edgeChunkZ) so the
+    /// openings always align.
     /// </summary>
-    public void UpdateSelectionVisual(int newSelectedSlotID, int oldSelectedSlotID)
+    private int GetDoorwayCenter(int edgeCx, int edgeCz, int seed, int channel, int maxCenter)
     {
-        // 1. Desativa o destaque do slot antigo (segurança de índice)
-        if (oldSelectedSlotID >= 0 && oldSelectedSlotID < slotUIObjects.Count)
+        int margin = _doorW / 2 + 2; // keep doorway away from corners
+        return WorldGenNoiseUtils.HashToInt(
+            edgeCx * 7 + channel * 1000,
+            edgeCz * 13,
+            seed,
+            margin,
+            maxCenter - margin);
+    }
+
+    // ── Carving helpers ───────────────────────────────────────────────────────
+
+    /// <summary>Carves a doorway on a Z-constant edge (North/South).</summary>
+    private void CarveDoorwayAlongX(
+        VoxelChunkData data,
+        int centreX, int fixedZ,
+        int floorY, int ceilY, int w)
+    {
+        int half = _doorW / 2;
+        for (int lx = centreX - half; lx <= centreX + half; lx++)
         {
-            GameObject oldSlot = slotUIObjects[oldSelectedSlotID];
-            if (oldSlot.TryGetComponent<Image>(out Image oldBackground))
-            {
-                oldBackground.sprite = defaultSlotSprite;
-            }
-        }
+            if (lx < 0 || lx >= w) continue;
 
-        // 2. Ativa o destaque do novo slot selecionado (segurança de índice)
-        if (newSelectedSlotID >= 0 && newSelectedSlotID < slotUIObjects.Count)
+            data.SetBlock(lx, floorY, fixedZ, _floorId);
+            data.SetBlock(lx, ceilY,  fixedZ, _ceilId);
+
+            for (int ly = floorY + 1; ly < ceilY; ly++)
+                data.SetBlock(lx, ly, fixedZ, _airId);
+        }
+    }
+
+    /// <summary>Carves a doorway on an X-constant edge (East/West).</summary>
+    private void CarveDoorwayAlongZ(
+        VoxelChunkData data,
+        int fixedX, int centreZ,
+        int floorY, int ceilY, int w)
+    {
+        int half = _doorW / 2;
+        for (int lz = centreZ - half; lz <= centreZ + half; lz++)
         {
-            GameObject newSlot = slotUIObjects[newSelectedSlotID];
-            if (newSlot.TryGetComponent<Image>(out Image newBackground))
-            {
-                newBackground.sprite = selectedSlotSprite;
-            }
+            if (lz < 0 || lz >= w) continue;
+
+            data.SetBlock(fixedX, floorY, lz, _floorId);
+            data.SetBlock(fixedX, ceilY,  lz, _ceilId);
+
+            for (int ly = floorY + 1; ly < ceilY; ly++)
+                data.SetBlock(fixedX, ly, lz, _airId);
         }
     }
-
-    public void ToggleInventoryBar(bool value)
-    {
-        InventoryBarUI.SetActive(value);
-    }
 }
 
 
-==========================================
-SCRIPT: ItemData.cs
-==========================================
-using UnityEngine;
-
-[CreateAssetMenu(fileName = "ItemData", menuName = "Inventory/ItemData")]
-public class ItemData : ScriptableObject
-{
-    public string id; // ID único para salvar/carregar
-    public string itemName;
-
-    public Sprite icon;
-
-    public int maxStackAmount = 64; // Quantidade máxima por stack
-    public GameObject itemPrefab; // O modelo 3D para construir
-    public bool isPlaceable;
-    public bool isUsable;
-}
-
-[System.Serializable]
-public class ItemStack
-{
-    public ItemData itemData;
-    public int amount;
-
-    public ItemStack(ItemData data, int initialAmount)
-    {
-        itemData = data;
-        amount = initialAmount;
-    }
-}
-
 
 ==========================================
-SCRIPT: LevelGrantSource.cs
+SCRIPT: SETUP_GUIDE.cs
+==========================================
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BackroomsWorldSettings — README
+//
+//  This file describes what to configure on a VoxelWorldSettings SO that is
+//  dedicated to the Backrooms dimension.  It is NOT a code file — read it
+//  alongside VoxelWorldSettings.cs and create the SO in the Unity Editor.
+//
+//  ── RECOMMENDED SETTINGS ──────────────────────────────────────────────────
+//
+//  chunkWidth        : 16     (or 32 for larger rooms — larger = less seaming)
+//  chunkHeight       : 9      (set minHeight = 0, maxHeight = 8 for flat world)
+//  minHeight         : 0      (Backrooms are flat — no terrain elevation)
+//  maxHeight         : 8      (gives 9 vertical slices, enough for 5-tall rooms)
+//  viewDistanceInChunks : 4   (adjust based on target platform performance)
+//  maxChunkBuildsPerFrame : 2
+//  seed              : 0      (random each session — or pick a fixed number)
+//  noiseScale        : 60     (unused by BackroomsGenerator but keep it set)
+//  atlasSize         : 4      (4×4 = 16 block slots — more than enough)
+//  chunkMaterial     : <your backrooms material with atlas texture>
+//
+//  ── RECOMMENDED BLOCK IDS ─────────────────────────────────────────────────
+//
+//  Create one VoxelBlockType SO per row below and add all to a VoxelBlockRegistry:
+//
+//  ID | Name              | isSolid | Notes
+//  ───┼───────────────────┼─────────┼────────────────────────────────────────
+//   0 | Air               | false   | Required
+//  10 | BackroomsFloor    | true    | Yellow linoleum / carpet; tile (0,0) in atlas
+//  11 | BackroomsCeiling  | true    | Drop ceiling / white panels; tile (1,0)
+//  12 | BackroomsWall     | true    | Yellow wallpaper; tile (2,0) (all faces same)
+//  13 | BackroomsPillar   | true    | Concrete; tile (3,0)
+//  14 | BackroomsVoid     | true    | Very dark fill between rooms; tile (0,1)
+//
+//  ── ATLAS LAYOUT (4×4, 16 tiles) ──────────────────────────────────────────
+//
+//   col→  0          1         2        3
+//  row↓
+//   0     Floor     Ceiling   Wall     Pillar
+//   1     Void      <free>    <free>   <free>
+//   2     <free>    <free>    <free>   <free>
+//   3     <free>    <free>    <free>   <free>
+//
+//  ── STRUCTURE CONFIGS TO CREATE ───────────────────────────────────────────
+//
+//  Create each via Assets > Create > WorldGen > Backrooms > Structure Config,
+//  then add all to BackroomsGeneratorAsset.structureConfigs.
+//
+//  Name            | Type       | Weight | Length  | Width  | Height | Notes
+//  ────────────────┼────────────┼────────┼─────────┼────────┼────────┼────────
+//  MainCorridor    | Corridor   |  30    | 10–24   | 3–5    | 3–4    | Common hallway
+//  WideCorridor    | Corridor   |  10    |  8–16   | 5–8    | 4–5    | Wider variant
+//  SmallRoom       | Room       |  20    |  6–10   | 6–10   | 3–4    | Typical room
+//  LargeRoom       | Room       |  10    | 12–20   | 12–20  | 4–5    | Open area
+//  PillarRoom      | PillarRoom |  10    | 12–24   | 12–24  | 4–5    | Colonnades
+//  CrawlSpace      | CrawlSpace |   5    |  6–14   | 2–3    | 1–2    | Low passage
+//
+//  ── DimensionProfile SETUP ────────────────────────────────────────────────
+//
+//  Create via Assets > Create > WorldGen > Dimension Profile
+//    dimensionId       : "backrooms_level0"
+//    displayName       : "Backrooms — Level 0"
+//    worldSettings     : <your BackroomsWorldSettings SO>
+//    generatorAsset    : <your BackroomsGeneratorAsset SO>
+//    passes[0]         : <BackroomsConnectorPassAsset SO>  ← ensures cross-chunk doors
+//    defaultSpawnPosition : (8, 1, 8)   ← lands player inside a generated room
+//
+//  ── DimensionRegistry SETUP ───────────────────────────────────────────────
+//
+//  Create via Assets > Create > WorldGen > Dimension Registry
+//    dimensions[0] : <OverworldDimensionProfile>
+//    dimensions[1] : <BackroomsDimensionProfile>
+//    startingDimensionId : "overworld"   (or "backrooms_level0" to start there)
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+
+==========================================
+SCRIPT: BackroomsLayout.cs
 ==========================================
 using System.Collections.Generic;
 using UnityEngine;
 
-public class LevelGrantSource : MonoBehaviour, IItemGrantSource
-{
-    [SerializeField] private List<ItemGrant> levelStartItems;
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BackroomsLayout  —  Pure-logic layout engine for Backrooms chunk generation.
+//
+//  RESPONSIBILITY
+//  Given a list of BackroomsStructureConfig SOs and the chunk coordinates,
+//  this class:
+//    1. Picks a primary structure for the chunk (weighted random).
+//    2. Attempts to place 0–N secondary structures in remaining space.
+//    3. Writes block IDs into a VoxelChunkData, carving out interiors and
+//       laying floors, walls, and ceilings.
+//
+//  COORDINATE CONVENTION
+//  All positions are in LOCAL chunk space (lx, ly, lz).
+//  The caller is responsible for world↔local translation.
+//
+//  INFINITE WORLD CONSISTENCY
+//  Every placement decision is derived deterministically from (chunkX, chunkZ,
+//  seed) using WorldGenNoiseUtils.HashInts — the same chunk always generates
+//  identically regardless of load order.
+//
+//  THREAD SAFETY
+//  Pure static / no Unity API.  Can be called from a background thread.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    public int Priority => 50;
-    public bool IsAvailable() => levelStartItems != null && levelStartItems.Count > 0;
-    public IEnumerable<ItemGrant> GetItemGrants() => levelStartItems;
+public static class BackroomsLayout
+{
+    // ── Entry point ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fills <paramref name="data"/> with a Backrooms layout chosen from
+    /// <paramref name="configs"/>.
+    /// </summary>
+    /// <param name="data">Chunk data to write into (must already be sized).</param>
+    /// <param name="settings">World settings (height range, etc.).</param>
+    /// <param name="configs">Available structure configs with their weights.</param>
+    /// <param name="seed">Resolved world seed.</param>
+    /// <param name="solidFillId">Block used to fill space that is NOT part of any structure
+    /// (solid backrooms "void" between rooms).</param>
+    public static void Generate(
+        VoxelChunkData                   data,
+        VoxelWorldSettings               settings,
+        List<BackroomsStructureConfig>   configs,
+        int                              seed,
+        byte                             solidFillId = 12)
+    {
+        int cx = data.ChunkCoord.x;
+        int cz = data.ChunkCoord.y;
+        int w  = data.Width;
+        int h  = data.Height;
+
+        // 1. Flood-fill with solid material (wall mass)
+        data.Fill(solidFillId);
+
+        if (configs == null || configs.Count == 0) return;
+
+        // 2. Build weighted lookup
+        float totalWeight = 0f;
+        foreach (var cfg in configs)
+            if (cfg != null) totalWeight += cfg.spawnWeight;
+
+        if (totalWeight <= 0f) return;
+
+        // 3. Pick & carve primary structure (always at chunk centre)
+        BackroomsStructureConfig primary = PickWeightedRandom(configs, totalWeight, cx, cz, seed, channel: 0);
+        if (primary != null)
+            CarveStructure(data, settings, primary, cx, cz, seed, isSecondary: false);
+
+        // 4. Attempt to carve a secondary structure at an offset position
+        //    (simple approach: try once at a hash-determined corner quadrant)
+        int hashSec = WorldGenNoiseUtils.HashInts(cx * 7, cz * 13, seed + 1);
+        if ((hashSec & 0x3) != 0) // 75% chance of a second structure
+        {
+            BackroomsStructureConfig secondary = PickWeightedRandom(
+                configs, totalWeight, cx + 31, cz + 17, seed, channel: 1);
+            if (secondary != null)
+                CarveStructure(data, settings, secondary, cx + 31, cz + 17, seed, isSecondary: true);
+        }
+    }
+
+    // ── Structure carving ─────────────────────────────────────────────────────
+
+    private static void CarveStructure(
+        VoxelChunkData          data,
+        VoxelWorldSettings      settings,
+        BackroomsStructureConfig cfg,
+        int hx, int hz,         // hash inputs for this placement
+        int seed,
+        bool isSecondary)
+    {
+        int w  = data.Width;
+        int h  = data.Height;
+
+        // Resolve concrete dimensions from ranges
+        int length = WorldGenNoiseUtils.HashToInt(hx, hz, seed + 10, cfg.lengthRange.x, cfg.lengthRange.y);
+        int width  = WorldGenNoiseUtils.HashToInt(hx, hz, seed + 11, cfg.widthRange.x,  cfg.widthRange.y);
+        int height = WorldGenNoiseUtils.HashToInt(hx, hz, seed + 12, cfg.heightRange.x, cfg.heightRange.y);
+
+        // Clamp to chunk bounds (minus 1 border for walls)
+        length = Mathf.Min(length, w - 2);
+        width  = Mathf.Min(width,  w - 2);
+        height = Mathf.Min(height, h - 2);
+        if (length < 2 || width < 2 || height < 1) return;
+
+        // Determine orientation: rotate 90° with hash
+        bool rotated = cfg.allowRotation &&
+                       (WorldGenNoiseUtils.HashInts(hx + 5, hz + 5, seed + 13) & 1) == 1;
+
+        int dimX = rotated ? width  : length;
+        int dimZ = rotated ? length : width;
+
+        // Place at chunk centre (secondary offset by quadrant)
+        int baseX = (w - dimX) / 2;
+        int baseZ = (w - dimZ) / 2;
+
+        if (isSecondary)
+        {
+            int qx = (WorldGenNoiseUtils.HashInts(hx, hz, seed + 20) & 1) == 0 ? 1 : -1;
+            int qz = (WorldGenNoiseUtils.HashInts(hx, hz, seed + 21) & 1) == 0 ? 1 : -1;
+            baseX = Mathf.Clamp(baseX + qx * (w / 4), 1, w - dimX - 1);
+            baseZ = Mathf.Clamp(baseZ + qz * (w / 4), 1, w - dimZ - 1);
+        }
+
+        // Floor Y: place structures at the bottom of the valid height range
+        int floorLocalY = 0;   // local Y = 0 → world minHeight
+        int ceilLocalY  = floorLocalY + height + 1; // +1 for ceiling slab
+        if (ceilLocalY >= h) ceilLocalY = h - 1;
+
+        switch (cfg.structureType)
+        {
+            case BackroomsStructureType.Corridor:
+            case BackroomsStructureType.CrawlSpace:
+                CarveCorridor(data, cfg, baseX, baseZ, dimX, dimZ, floorLocalY, ceilLocalY,
+                              hx, hz, seed);
+                break;
+
+            case BackroomsStructureType.Room:
+                CarveRoom(data, cfg, baseX, baseZ, dimX, dimZ, floorLocalY, ceilLocalY,
+                          hx, hz, seed);
+                break;
+
+            case BackroomsStructureType.PillarRoom:
+                CarveRoom(data, cfg, baseX, baseZ, dimX, dimZ, floorLocalY, ceilLocalY,
+                          hx, hz, seed);
+                CarvePillars(data, cfg, baseX, baseZ, dimX, dimZ, floorLocalY, ceilLocalY);
+                break;
+        }
+    }
+
+    // ── Corridor ──────────────────────────────────────────────────────────────
+
+    private static void CarveCorridor(
+        VoxelChunkData data, BackroomsStructureConfig cfg,
+        int bx, int bz, int dx, int dz,
+        int floorY, int ceilY,
+        int hx, int hz, int seed)
+    {
+        for (int lx = bx; lx < bx + dx; lx++)
+        for (int lz = bz; lz < bz + dz; lz++)
+        {
+            bool isEdgeX = (lx == bx || lx == bx + dx - 1);
+            bool isEdgeZ = (lz == bz || lz == bz + dz - 1);
+            bool isWall  = isEdgeX || isEdgeZ;
+
+            // Ceiling
+            data.SetBlock(lx, ceilY, lz, cfg.ceilingBlockId);
+
+            // Floor
+            data.SetBlock(lx, floorY, lz, cfg.floorBlockId);
+
+            // Interior column
+            for (int ly = floorY + 1; ly < ceilY; ly++)
+            {
+                if (isWall)
+                {
+                    byte wallId = cfg.wallBlockId;
+
+                    // Alcove chance: recess wall 1 block on non-corner edges
+                    if (cfg.wallAlcoveChance > 0f && !isEdgeX && !isEdgeZ == false)
+                    {
+                        float alcoveNoise = WorldGenNoiseUtils.HashToFloat(lx * 31 + lz, ly, seed + 99);
+                        if (alcoveNoise < cfg.wallAlcoveChance)
+                            wallId = cfg.airBlockId; // carve alcove
+                    }
+
+                    data.SetBlock(lx, ly, lz, wallId);
+                }
+                else
+                {
+                    data.SetBlock(lx, ly, lz, cfg.airBlockId);
+                }
+            }
+
+            // Ceiling variation notch
+            if (!isWall && cfg.ceilingVariationChance > 0f)
+            {
+                float ceilNoise = WorldGenNoiseUtils.HashToFloat(lx + lz * 17, hx + hz, seed + 77);
+                if (ceilNoise < cfg.ceilingVariationChance)
+                    data.SetBlock(lx, ceilY - 1, lz, cfg.ceilingBlockId); // extra ceiling layer
+            }
+        }
+    }
+
+    // ── Room ──────────────────────────────────────────────────────────────────
+
+    private static void CarveRoom(
+        VoxelChunkData data, BackroomsStructureConfig cfg,
+        int bx, int bz, int dx, int dz,
+        int floorY, int ceilY,
+        int hx, int hz, int seed)
+    {
+        // Rooms use the same algorithm as corridors — the difference is in the
+        // width/length ratios defined in the config.
+        CarveCorridor(data, cfg, bx, bz, dx, dz, floorY, ceilY, hx, hz, seed);
+    }
+
+    // ── Pillars ───────────────────────────────────────────────────────────────
+
+    private static void CarvePillars(
+        VoxelChunkData data, BackroomsStructureConfig cfg,
+        int bx, int bz, int dx, int dz,
+        int floorY, int ceilY)
+    {
+        int spX = cfg.pillarSpacing.x;
+        int spZ = cfg.pillarSpacing.y;
+        int r   = cfg.pillarRadius;
+
+        for (int px = bx + spX; px < bx + dx - spX; px += spX)
+        for (int pz = bz + spZ; pz < bz + dz - spZ; pz += spZ)
+        {
+            // Write pillar blocks for each voxel within radius
+            for (int ox = -r + 1; ox < r; ox++)
+            for (int oz = -r + 1; oz < r; oz++)
+            {
+                int lx = px + ox;
+                int lz = pz + oz;
+                if (!data.IsInBounds(lx, floorY, lz)) continue;
+
+                for (int ly = floorY; ly <= ceilY; ly++)
+                    data.SetBlock(lx, ly, lz, cfg.pillarBlockId);
+            }
+        }
+    }
+
+    // ── Weighted random pick ──────────────────────────────────────────────────
+
+    private static BackroomsStructureConfig PickWeightedRandom(
+        List<BackroomsStructureConfig> configs,
+        float totalWeight,
+        int hx, int hz, int seed, int channel)
+    {
+        float pick = WorldGenNoiseUtils.HashToRange(hx, hz + channel * 1000, seed, 0f, totalWeight);
+        float cumulative = 0f;
+
+        foreach (var cfg in configs)
+        {
+            if (cfg == null) continue;
+            cumulative += cfg.spawnWeight;
+            if (pick <= cumulative) return cfg;
+        }
+
+        return configs[configs.Count - 1];
+    }
 }
 
 
+
 ==========================================
-SCRIPT: PlayerInventoryLoader.cs
+SCRIPT: BackroomsStructureConfig.cs
 ==========================================
-using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
-public class PlayerInventoryLoader : MonoBehaviour
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BackroomsStructureConfig  —  Data-only ScriptableObject describing ONE
+//  type of spatial unit that can appear in the Backrooms world.
+//
+//  DESIGN PHILOSOPHY
+//  Structures are parameterised ranges, not fixed blueprints.  The generator
+//  picks concrete dimensions at runtime using seeded hashing, so each chunk
+//  looks distinct while still obeying the config constraints.
+//
+//  STRUCTURE TYPES
+//  ┌──────────────────┬────────────────────────────────────────────────────────┐
+//  │ Corridor         │ Long, narrow passage (widthRange.x × widthRange.y,    │
+//  │                  │ heightRange.x × heightRange.y tall)                   │
+//  ├──────────────────┼────────────────────────────────────────────────────────┤
+//  │ Room             │ Wider open space (lengthRange × widthRange × height)  │
+//  ├──────────────────┼────────────────────────────────────────────────────────┤
+//  │ PillarRoom       │ Room variant with a grid of pillar columns             │
+//  ├──────────────────┼────────────────────────────────────────────────────────┤
+//  │ CrawlSpace       │ Very low passage (height 1-2), claustrophobic          │
+//  └──────────────────┴────────────────────────────────────────────────────────┘
+//
+//  WEIGHT
+//  Each config carries a spawnWeight.  BackroomsLayout uses a weighted-random
+//  pick, so rare structure types can be included at low weights.
+//
+//  BLOCK IDs
+//  Block IDs must match what's in your VoxelBlockRegistry.
+//  See BackroomsGeneratorAsset for the recommended Backrooms block set.
+//
+//  Create via: Assets > Create > WorldGen > Backrooms > Structure Config
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[CreateAssetMenu(
+    fileName = "BackroomsStructure_New",
+    menuName = "WorldGen/Backrooms/Structure Config")]
+public class BackroomsStructureConfig : ScriptableObject
 {
-    [Header("Core")]
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private DefaultLoadoutSource defaultLoadout;
+    // ── Identity ──────────────────────────────────────────────────────────────
 
-    [Header("Optional Sources (auto-discovered if null)")]
-    [SerializeField] private InventorySaveService saveService;
-    [SerializeField] private LevelGrantSource levelGrants;
+    [Header("Identity")]
+    public string structureName = "Corridor";
 
-    private void Awake()
-    {
-        // Inventory initializes here as before
-        inventoryManager.InitializeInventoryBar();
-    }
+    [Tooltip("Type drives which layout algorithm is used.")]
+    public BackroomsStructureType structureType = BackroomsStructureType.Corridor;
 
-    private void Start()
-    {
-        // All granting happens here, after Awake — execution order is now explicit
-        LoadInventory();
-    }
+    [Tooltip("Relative probability of this structure appearing in any given chunk.  " +
+             "All weights across all configs are summed; each entry's share = weight / total.")]
+    [Range(0f, 100f)]
+    public float spawnWeight = 10f;
 
-    private void LoadInventory()
-    {
-        var sources = GatherSources();
-        var chosen = PickSource(sources);
+    // ── Dimensional Ranges ────────────────────────────────────────────────────
 
-        if (chosen == null)
-        {
-            Debug.LogWarning("No item grant source available. Inventory will be empty.");
-            return;
-        }
+    [Header("Dimensional Ranges (min / max in voxels)")]
 
-        foreach (var grant in chosen.GetItemGrants())
-            inventoryManager.TryAddItem(grant.item, grant.amount);
+    [Tooltip("Min/max length along the primary axis (Z for corridors, X for rooms).")]
+    public Vector2Int lengthRange = new Vector2Int(8, 24);
 
-        inventoryManager.RefreshSelectedSlot();
-        
-        Debug.Log($"Inventory loaded from: {chosen.GetType().Name}");
-    }
+    [Tooltip("Min/max width along the secondary axis.")]
+    public Vector2Int widthRange  = new Vector2Int(3, 6);
 
-    private List<IItemGrantSource> GatherSources()
-    {
-        var sources = new List<IItemGrantSource>();
+    [Tooltip("Min/max interior height in blocks (floor-to-ceiling, excluding floor/ceiling slabs).")]
+    public Vector2Int heightRange = new Vector2Int(3, 5);
 
-        // Auto-discover LevelGrantSource in scene if not assigned
-        if (levelGrants == null)
-            levelGrants = Object.FindAnyObjectByType<LevelGrantSource>();
+    // ── Pillar Room Config (only used when structureType == PillarRoom) ───────
 
-        if (saveService != null) sources.Add(saveService);
-        if (levelGrants != null) sources.Add(levelGrants);
-        if (defaultLoadout != null) sources.Add(defaultLoadout);
+    [Header("Pillar Config (PillarRoom only)")]
+    [Tooltip("Spacing between pillar centres in X and Z.")]
+    public Vector2Int pillarSpacing = new Vector2Int(4, 4);
 
-        return sources;
-    }
+    [Tooltip("Pillar radius in blocks (1 = single column, 2 = 2×2 block square, etc.).")]
+    [Range(1, 3)]
+    public int pillarRadius = 1;
 
-    // Pick the highest-priority available source
-    // To MERGE sources instead (e.g. save data + level grants), change this method
-    private IItemGrantSource PickSource(List<IItemGrantSource> sources)
-    {
-        return sources
-            .Where(s => s.IsAvailable())
-            .OrderBy(s => s.Priority)
-            .FirstOrDefault();
-    }
+    // ── Block IDs ─────────────────────────────────────────────────────────────
 
-    public void SaveInventory()
-    {
-        saveService?.Save(inventoryManager.GetSlots());
-    }
+    [Header("Block IDs (must match VoxelBlockRegistry)")]
+
+    [Tooltip("Block used for floors.  Yellow carpet texture recommended.")]
+    public byte floorBlockId = 10;
+
+    [Tooltip("Block used for ceilings.")]
+    public byte ceilingBlockId = 11;
+
+    [Tooltip("Block used for walls.")]
+    public byte wallBlockId = 12;
+
+    [Tooltip("Block used for pillars (PillarRoom only).")]
+    public byte pillarBlockId = 13;
+
+    [Tooltip("Block ID 0 = Air; used to carve out the interior.")]
+    public byte airBlockId = 0;
+
+    // ── Variation ─────────────────────────────────────────────────────────────
+
+    [Header("Variation")]
+
+    [Tooltip("If true, the structure can be oriented along the X axis instead of Z.")]
+    public bool allowRotation = true;
+
+    [Tooltip("Probability [0-1] that the ceiling has small notch cuts (adds visual variety).")]
+    [Range(0f, 1f)]
+    public float ceilingVariationChance = 0.15f;
+
+    [Tooltip("Probability [0-1] that a wall has a recessed alcove (1-block deep).")]
+    [Range(0f, 1f)]
+    public float wallAlcoveChance = 0.1f;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 
-==========================================
-SCRIPT: PlacedItem.cs
-==========================================
-using UnityEngine;
-
-public class PlacedItem : MonoBehaviour
+public enum BackroomsStructureType
 {
-    [SerializeField] private ItemData itemData;
-    public bool IsInteractable => GetComponent<IInteractable>() != null;
-    
-
-    private DebugLabel debugLabel;
-
-    private void Awake()
-    {
-        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
-    }
-
-    private void Start()
-    {
-        if (itemData == null)
-        {
-            Debug.LogError("PlacedItem: This Placed item has no ItemData reference assigned, assign one when placing an item.");
-        }
-
-        PerformSimpleDebug();
-    }
-
-    public void SetItemData(ItemData data)
-    {
-        itemData = data;
-        debugLabel.Debug($"Placed: {itemData.itemName}");
-    }
-
-    private void PerformSimpleDebug()
-    {
-        debugLabel.Flash($"Item: {itemData.itemName}");
-    }
-
-    public IInteractable GetInteractable() => GetComponent<IInteractable>();
+    Corridor,
+    Room,
+    PillarRoom,
+    CrawlSpace,
 }
 
 
