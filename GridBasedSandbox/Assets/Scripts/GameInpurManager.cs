@@ -5,6 +5,7 @@ public class GameInpurManager : MonoBehaviour
     [SerializeField] private GridSystem gridSystem;
     [SerializeField] private InventoryManager inventoryManager;
     [SerializeField] private SimpleObjectPlacer objectPlacer;
+    [SerializeField] private VoxelBlockPlacer voxelBlockPlacer;
 
     void Update()
     {
@@ -33,8 +34,8 @@ public class GameInpurManager : MonoBehaviour
     {
         if (Input.GetMouseButtonDown(0))
         {
-            
-            objectPlacer.RemoveObjectFromCell();
+            //objectPlacer.RemoveObjectFromCell();
+            voxelBlockPlacer.RemoveBlock();
         }
         else if (Input.GetMouseButtonDown(1))
         {
@@ -46,7 +47,10 @@ public class GameInpurManager : MonoBehaviour
             }
             // Only place if hands are NOT empty — check inventory
             if (inventoryManager.GetSelectedItem() != null)
-                objectPlacer.PlaceObjectInCell();
+            {
+                voxelBlockPlacer.PlaceBlock();
+            }
+                //objectPlacer.PlaceObjectInCell();
                 
         }
     }

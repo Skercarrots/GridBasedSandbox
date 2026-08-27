@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 23db671b5bd532f48b40c1b6a0b7b785, type: 3}
+  m_Name: WorldSettings
+  m_EditorClassIdentifier: Assembly-CSharp::VoxelWorldSettings
+  blockRegistry: {fileID: 11400000, guid: 086929fa0ab26074e95c94d89c18621d, type: 2}
+  waterBlock: {fileID: 11400000, guid: b88339c5424085349a2f6499cb7d0574, type: 2}
+  stoneBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
+  seaLevel: 0
+  chunkWidth: 16
+  minHeight: -32
+  maxHeight: 80
+  viewDistanceInChunks: 16
+  maxChunkBuildsPerFrame: 3
+  seed: 10
+  atlasSize: 4
+  chunkMaterial: {fileID: 2100000, guid: 92a8bfdf16072aa4f81477ace86f7829, type: 2}

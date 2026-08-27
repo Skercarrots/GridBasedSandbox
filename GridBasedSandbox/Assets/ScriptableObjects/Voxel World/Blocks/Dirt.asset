@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b91b8f384be4516489e8aaf7e4992300, type: 3}
+  m_Name: Dirt
+  m_EditorClassIdentifier: Assembly-CSharp::VoxelBlockType
+  blockId: 2
+  blockName: Dirt
+  isSolid: 1
+  isTransparent: 0
+  defaultTile: {x: 1, y: 0}
+  tileTop: {x: -1, y: 0}
+  tileBottom: {x: -1, y: 0}
+  tileFront: {x: -1, y: 0}
+  tileBack: {x: -1, y: 0}
+  tileLeft: {x: -1, y: 0}
+  tileRight: {x: -1, y: 0}

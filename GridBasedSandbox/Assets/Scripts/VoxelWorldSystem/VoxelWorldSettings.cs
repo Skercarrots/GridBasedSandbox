@@ -5,7 +5,18 @@ using UnityEngine;
 //  Create via: Assets > Create > VoxelWorld > World Settings
 //
 //  Keep one instance per "world profile" (e.g. overworld, cave, test level).
-//  Assign it to VoxelWorldManager in the Inspector.
+//  Assign it to a DimensionProfile, which VoxelWorldManager reads from.
+//
+//  CHANGED FROM THE ORIGINAL
+//  • chunkHeight is gone — it used to be a separate field you had to keep
+//    manually in sync with minHeight/maxHeight (easy to forget and silently
+//    break world generation). Chunk height is now always TotalWorldHeight,
+//    computed from minHeight/maxHeight, so there's nothing to desync.
+//  • noiseScale/octaves/persistence/lacunarity moved to OverworldGenerator's
+//    "Continentalness" noise layer — height shaping is generator-specific now,
+//    not a global setting, since different dimensions may want different shapes.
+//  • Added waterBlock/stoneBlock/seaLevel so generators reference real block
+//    assets instead of hardcoding byte IDs that can drift from the registry.
 // ─────────────────────────────────────────────────────────────────────────────
 
 [CreateAssetMenu(fileName = "WorldSettings", menuName = "VoxelWorld/World Settings")]
@@ -15,51 +26,48 @@ public class VoxelWorldSettings : ScriptableObject
     [Header("Block Registry")]
     public VoxelBlockRegistry blockRegistry;
 
+    // ── Global Blocks ─────────────────────────────────────────────────────────
+    [Header("Global Blocks")]
+    [Tooltip("Used below sea level for any column whose biome doesn't specify its own water.")]
+    public VoxelBlockType waterBlock;
+
+    [Tooltip("Used below every biome's subsurface layer.")]
+    public VoxelBlockType stoneBlock;
+
+    [Tooltip("World-space Y at and below which above-surface air becomes water.")]
+    public int seaLevel = 0;
+
     // ── Chunk Dimensions ──────────────────────────────────────────────────────
     [Header("Chunk Dimensions")]
     [Tooltip("Number of blocks per chunk on X and Z axes.")]
-    [Range(4, 32)] public int chunkWidth  = 16;
-
-    [Tooltip("Number of blocks in a chunk on the Y axis.")]
-    [Range(1, 64)] public int chunkHeight = 9;   // height range −4 … +4 = 9 slices
+    public int chunkWidth = 16;
 
     // ── World Height ──────────────────────────────────────────────────────────
     [Header("World Height Limits")]
-    [Tooltip("Minimum block Y in world space (inclusive). Default −4 for your spec.")]
-    public int minHeight = -4;
+    [Tooltip("Minimum block Y in world space (inclusive).")]
+    public int minHeight = -32;
 
-    [Tooltip("Maximum block Y in world space (inclusive). Default +4 for your spec.")]
-    public int maxHeight =  4;
+    [Tooltip("Maximum block Y in world space (inclusive).")]
+    public int maxHeight = 80;
 
     // ── Streaming / View Distance ─────────────────────────────────────────────
     [Header("Streaming")]
     [Tooltip("How many chunks are loaded around the player on X and Z (in chunk units).")]
-    [Range(1, 12)] public int viewDistanceInChunks = 4;
+    [Range(1, 64)] public int viewDistanceInChunks = 4;
 
-    [Tooltip("Max chunks rebuilt per frame — controls hitching vs latency trade-off.")]
-    [Range(1, 8)]  public int maxChunkBuildsPerFrame = 2;
+    [Tooltip("Max chunks remeshed per frame — controls hitching vs latency trade-off. " +
+             "Chunk DATA generation is no longer bound by this; see VoxelWorldManager.")]
+    [Range(1, 8)] public int maxChunkBuildsPerFrame = 2;
 
-    // ── Terrain Generation ────────────────────────────────────────────────────
-    [Header("Terrain Generation")]
+    // ── Generation ─────────────────────────────────────────────────────────────
+    [Header("Generation")]
     [Tooltip("Master seed. 0 = random at runtime.")]
     public int seed = 0;
-
-    [Tooltip("Noise scale — larger = smoother hills.")]
-    [Range(10f, 200f)] public float noiseScale = 60f;
-
-    [Tooltip("Number of noise octaves for detail layering.")]
-    [Range(1, 6)] public int octaves = 3;
-
-    [Tooltip("How quickly amplitude falls per octave.")]
-    [Range(0f, 1f)] public float persistence = 0.5f;
-
-    [Tooltip("How quickly frequency rises per octave.")]
-    [Range(1f, 4f)] public float lacunarity = 2f;
 
     // ── Texture Atlas ─────────────────────────────────────────────────────────
     [Header("Texture Atlas")]
     [Tooltip("Number of tiles in one row/column of the atlas texture.")]
-    [Range(1, 32)] public int atlasSize = 4;   // 4×4 = 16 block types
+    [Range(1, 32)] public int atlasSize = 4;
 
     // ── Render Material ───────────────────────────────────────────────────────
     [Header("Rendering")]
@@ -71,7 +79,9 @@ public class VoxelWorldSettings : ScriptableObject
     /// <summary>UV size of one tile in a square atlas.</summary>
     public float TileUVSize => 1f / atlasSize;
 
-    /// <summary>Total block height of the world (minHeight to maxHeight inclusive).</summary>
+    /// <summary>Total block height of the world (minHeight to maxHeight inclusive). This
+    /// is what chunk data arrays are sized to — change minHeight/maxHeight and every
+    /// new chunk picks it up automatically.</summary>
     public int TotalWorldHeight => maxHeight - minHeight + 1;
 
     /// <summary>Converts a world-space block Y to a local chunk slice index.</summary>

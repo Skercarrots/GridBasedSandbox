@@ -12,6 +12,12 @@ using UnityEngine;
 //  This is exactly what Minecraft does — the result is that interior block
 //  faces are never drawn, which massively reduces vertex and triangle counts.
 //
+//  CHANGED FROM THE ORIGINAL
+//  The block loop now walks section-by-section (see VoxelChunkData) and skips
+//  any section flagged as fully air. On a tall world this is most of the sky
+//  above the terrain and most of unlit deep stone with no nearby caves — this
+//  is a straight iteration-count win with no change to the resulting mesh.
+//
 //  CROSS-CHUNK NEIGHBOUR LOOKUP
 //  The builder accepts a IChunkNeighbourSampler so it can ask "what block is
 //  at local x=-1?" and get the answer from the adjacent loaded chunk.
@@ -58,10 +64,22 @@ public static class VoxelMeshBuilder
         { new(1,0,1), new(1,0,0), new(1,1,0), new(1,1,1) },
     };
 
-    // UV corners for a unit quad (before atlas remapping)
-    private static readonly Vector2[] BaseUVs =
+    // UV corner assignment per face, matching each face's actual vertex winding
+    // in FaceVertices (0,0)=bottom-left … (1,1)=top-right of the tile.
+    private static readonly Vector2[,] FaceUVCorners =
     {
-        new(0, 0), new(0, 1), new(1, 1), new(1, 0)
+        // Top
+        { new(0,0), new(0,1), new(1,1), new(1,0) },
+        // Bottom
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Front (+Z)
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Back (−Z)
+        { new(1,0), new(0,0), new(0,1), new(1,1) },
+        // Left (−X)
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Right (+X)
+        { new(1,0), new(0,0), new(0,1), new(1,1) },
     };
 
     // Triangle indices for two triangles forming one quad (relative to quad base)
@@ -90,52 +108,59 @@ public static class VoxelMeshBuilder
         var triangles = new List<int>();
         var uvs       = new List<Vector2>();
 
-        for (int lx = 0; lx < chunk.Width;  lx++)
-        for (int ly = 0; ly < chunk.Height; ly++)
-        for (int lz = 0; lz < chunk.Width;  lz++)
+        for (int lx = 0; lx < chunk.Width; lx++)
+        for (int lz = 0; lz < chunk.Width; lz++)
         {
-            byte id = chunk.GetBlock(lx, ly, lz);
-            if (id == 0) continue;   // air — skip
-
-            VoxelBlockType blockDef = registry.GetBlock(id);
-            if (blockDef == null || !blockDef.isSolid) continue;
-
-            var blockOrigin = new Vector3(lx, ly, lz);
-
-            for (int face = 0; face < 6; face++)
+            for (int section = 0; section < chunk.SectionCount; section++)
             {
-                Vector3Int dir = FaceNormals[face];
-                int nx = lx + dir.x;
-                int ny = ly + dir.y;
-                int nz = lz + dir.z;
+                if (!chunk.SectionHasBlocks(section)) continue;
 
-                // Resolve neighbour — may cross chunk border
-                byte neighbourId = SampleNeighbour(chunk, sampler, nx, ny, nz, settings);
+                int lyStart = section * VoxelChunkData.SECTION_HEIGHT;
+                int lyEnd   = Mathf.Min(lyStart + VoxelChunkData.SECTION_HEIGHT, chunk.Height);
 
-                // Only emit face if neighbour is non-solid (air, water, etc.)
-                if (registry.IsSolid(neighbourId)) continue;
+                for (int ly = lyStart; ly < lyEnd; ly++)
+                {
+                    byte id = chunk.GetBlock(lx, ly, lz);
+                    if (id == 0) continue;   // air — skip
 
-                // ── Emit face ─────────────────────────────────────────────
-                int baseVertex = vertices.Count;
+                    VoxelBlockType blockDef = registry.GetBlock(id);
+                    if (blockDef == null || !blockDef.isSolid) continue;
 
-                for (int v = 0; v < 4; v++)
-                    vertices.Add(blockOrigin + FaceVertices[face, v]);
+                    var blockOrigin = new Vector3(lx, ly, lz);
 
-                foreach (int t in QuadTriangles)
-                    triangles.Add(baseVertex + t);
+                    for (int face = 0; face < 6; face++)
+                    {
+                        Vector3Int dir = FaceNormals[face];
+                        int nx = lx + dir.x;
+                        int ny = ly + dir.y;
+                        int nz = lz + dir.z;
 
-                // ── Atlas UV ──────────────────────────────────────────────
-                Vector2Int tile = blockDef.GetTileForFace(face);
-                float uMin = tile.x       * tileSize + UV_INSET;
-                float uMax = (tile.x + 1) * tileSize - UV_INSET;
-                float vMin = tile.y       * tileSize + UV_INSET;
-                float vMax = (tile.y + 1) * tileSize - UV_INSET;
+                        byte neighbourId = SampleNeighbour(chunk, sampler, nx, ny, nz, settings);
+                        if (registry.IsSolid(neighbourId)) continue;
 
-                // Map BaseUVs corners to atlas tile
-                uvs.Add(new Vector2(uMin, vMin));
-                uvs.Add(new Vector2(uMin, vMax));
-                uvs.Add(new Vector2(uMax, vMax));
-                uvs.Add(new Vector2(uMax, vMin));
+                        int baseVertex = vertices.Count;
+
+                        for (int v = 0; v < 4; v++)
+                            vertices.Add(blockOrigin + FaceVertices[face, v]);
+
+                        foreach (int t in QuadTriangles)
+                            triangles.Add(baseVertex + t);
+
+                        Vector2Int tile = blockDef.GetTileForFace(face);
+                        float uMin = tile.x       * tileSize + UV_INSET;
+                        float uMax = (tile.x + 1) * tileSize - UV_INSET;
+                        float vMax = 1f - tile.y       * tileSize + UV_INSET;
+                        float vMin = 1f - (tile.y + 1) * tileSize - UV_INSET;
+
+                        for (int v = 0; v < 4; v++)
+                        {
+                            Vector2 corner = FaceUVCorners[face, v];
+                            float u = Mathf.Lerp(uMin, uMax, corner.x);
+                            float vCoord = Mathf.Lerp(vMin, vMax, corner.y);
+                            uvs.Add(new Vector2(u, vCoord));
+                        }
+                    }
+                }
             }
         }
 
@@ -150,15 +175,12 @@ public static class VoxelMeshBuilder
         int lx, int ly, int lz,
         VoxelWorldSettings     settings)
     {
-        // Local Y out of world range → treat as air
         if (ly < 0 || ly >= chunk.Height) return 0;
 
-        // Within this chunk?
         if (lx >= 0 && lx < chunk.Width && lz >= 0 && lz < chunk.Width)
             return chunk.GetBlock(lx, ly, lz);
 
-        // Cross-chunk border — delegate to the sampler
-        if (sampler == null) return 0;   // no sampler = treat border as air
+        if (sampler == null) return 0;
 
         int wx = chunk.WorldOriginX + lx;
         int wy = settings.LocalYToWorld(ly);

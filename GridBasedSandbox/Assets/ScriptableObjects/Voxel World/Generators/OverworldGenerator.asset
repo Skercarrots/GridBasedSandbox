@@ -1,0 +1,42 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd0936cfe6ec8b14e83b7188eb2f4243, type: 3}
+  m_Name: OverworldGenerator
+  m_EditorClassIdentifier: Assembly-CSharp::OverworldGenerator
+  biomeRegistry: {fileID: 11400000, guid: e73e10535906d614c896c8430abd91a7, type: 2}
+  continentalness:
+    scale: 250
+    octaves: 4
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 1
+  erosion:
+    scale: 180
+    octaves: 3
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 3.3
+  temperature:
+    scale: 500
+    octaves: 2
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 5.1
+  humidity:
+    scale: 500
+    octaves: 2
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 7.9
+  caveScale: 24
+  caveThreshold: 0.62
+  caveMinDepthBelowSurface: 4

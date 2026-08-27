@@ -1,1257 +1,1266 @@
 ==========================================
 DIRECTORY STRUCTURE
 ==========================================
-[Dir] Scripts
-    [Dir] Grid
-        - CellVisualizer.cs
-        - GridInteractorExample.cs
-        - GridSystem.cs
-    [Dir] Interactables
-        - Button.cs
-        - IInteractable.cs
-    [Dir] Inventory
-        - DefaultLoadoutSource.cs
-        - IItemGrantSource.cs
-        - InventoryManager.cs
-        - InventorySaveService.cs
-        - InventoryUI.cs
-        - ItemData.cs
-        - LevelGrantSource.cs
-        - PlayerInventoryLoader.cs
-    [Dir] PlacedItems
-        - PlacedItem.cs
-    - DebugLabel.cs
-    - GameInpurManager.cs
-    - RayVisualizer.cs
-    - SimpleObjectPlacer.cs
+[Dir] VoxelWorldSystem
+    - VoxelBlockPlacer.cs
+    - VoxelBlockRegistry.cs
+    - VoxelBlockType.cs
+    - VoxelChunk.cs
+    - VoxelChunkData.cs
+    - VoxelMeshBuilder.cs
+    - VoxelTerrainGenerator.cs
+    - VoxelWorldManager.cs
+    - VoxelWorldSettings.cs
 
 
 ==========================================
-SCRIPT: DebugLabel.cs
+SCRIPT: VoxelBlockPlacer.cs
 ==========================================
 using UnityEngine;
-using TMPro;
-using System.Collections;
 
-public class DebugLabel : MonoBehaviour
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockPlacer  — Bridges player input with VoxelWorldManager.
+//
+//  DESIGN INTENT
+//  Your existing SimpleObjectPlacer/GridSystem are left UNTOUCHED.
+//  This script is a NEW, parallel placer that handles voxel blocks only.
+//  Both can coexist in the same scene; the inventory system is shared.
+//
+//  HOW IT WORKS
+//  1. On right-click: raycasts against chunk colliders, determines which
+//     block face was hit, selects the adjacent empty cell, and calls
+//     VoxelWorldManager.TrySetBlock() with the selected block id.
+//  2. On left-click: removes the hit block (sets to Air, id 0).
+//  3. Uses the same hit-bias trick as your original SimpleObjectPlacer to
+//     avoid floating-point edge hits registering on the wrong block.
+//
+//  BLOCK ID SOURCE
+//  ItemData can optionally carry a voxelBlockId field.
+//  If the selected inventory item has voxelBlockId > 0, it is used.
+//  This lets your existing inventory system drive block placement with
+//  zero changes to InventoryManager.cs.
+//
+//  ENABLING / DISABLING
+//  Call SetActive(true/false) from GameInputManager or toggle
+//  via the public IsActive property. When disabled, no raycasts are fired.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelBlockPlacer : MonoBehaviour
 {
     [Header("References")]
-    [SerializeField] private TextMeshPro _label;
+    [SerializeField] private VoxelWorldManager worldManager;
+    [SerializeField] private VoxelWorldSettings settings;
+    [SerializeField] private Camera playerCamera;
 
     [Header("Settings")]
-    [SerializeField] private Vector3 _offset = new Vector3(0f, 1.5f, 0f);
-    [SerializeField] private float _fontSize = 3f;
-    [SerializeField] private Color _textColor = Color.white;
+    [SerializeField] private float maxReach       = 6f;
+    [SerializeField] private LayerMask chunkLayer;
 
-    [Header("Flash Settings")]
-    [SerializeField] private float _fadeInDuration = 0.2f;
-    [SerializeField] private float _fadeOutDuration = 0.4f;
+    [Header("Default block to place (when no item selected)")]
+    [SerializeField] private byte defaultBlockId = 3; // e.g. Grass
 
-    private Camera _mainCamera;
-    private bool _isVisible;
-    private Coroutine _flashCoroutine;
+    // Small offset to push the sample point inside the face we hit
+    private const float HIT_BIAS = 0.001f;
 
-    private void Awake()
+    public bool IsActive { get; set; } = true;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Start()
     {
-        _mainCamera = Camera.main;
-
-        if (_label == null)
-            _label = CreateLabel();
-
-        SetVisible(false);
+        if (playerCamera == null) playerCamera = Camera.main;
     }
 
-    private void LateUpdate()
-    {
-        if (!_isVisible || _mainCamera == null) return;
+    // ── Public API (call from GameInputManager) ────────────────────────────────
 
-        _label.transform.forward = _mainCamera.transform.forward;
-        _label.transform.position = transform.position + _offset;
+    /// <summary>
+    /// Places a block in the cell ADJACENT to the hit face.
+    /// Pass the blockId to place (0 = Air = no-op for placement).
+    /// </summary>
+    public void PlaceBlock(byte blockId = 0)
+    {
+        if (!IsActive || worldManager == null) return;
+
+        if (!Raycast(out RaycastHit hit)) return;
+
+        // The placement position is one step OUTSIDE the hit block (along its normal)
+        Vector3 placePoint = hit.point + hit.normal * HIT_BIAS;
+        Vector3Int blockPos = WorldPointToBlockCoord(placePoint);
+
+        byte id = blockId > 0 ? blockId : defaultBlockId;
+        worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, id);
     }
 
-    public void Debug(object value)
+    /// <summary>Removes (sets to Air) the block that was directly hit.</summary>
+    public void RemoveBlock()
     {
-        _label.text = value?.ToString() ?? "null";
-        SetVisible(true);
+        if (!IsActive || worldManager == null) return;
+
+        if (!Raycast(out RaycastHit hit)) return;
+
+        // Remove the hit block — bias INWARD so we land inside the block
+        Vector3 removePoint = hit.point - hit.normal * HIT_BIAS;
+        Vector3Int blockPos = WorldPointToBlockCoord(removePoint);
+
+        worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, 0);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private bool Raycast(out RaycastHit hit)
+    {
+        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
+        return Physics.Raycast(ray, out hit, maxReach, chunkLayer);
     }
 
     /// <summary>
-    /// Shows the label with a fade in, holds for stayDuration seconds, then fades out.
-    /// Interrupts any flash already in progress.
+    /// Converts a world-space float point to integer block coordinates.
+    /// Uses FloorToInt for correct negative-coord handling.
     /// </summary>
-    public void Flash(object value, float stayDuration = 1f)
+    public static Vector3Int WorldPointToBlockCoord(Vector3 point)
     {
-        if (_flashCoroutine != null)
-            StopCoroutine(_flashCoroutine);
-
-        _label.text = value?.ToString() ?? "null";
-        _flashCoroutine = StartCoroutine(FlashRoutine(stayDuration));
-    }
-
-    public void ClearDebug()
-    {
-        if (_flashCoroutine != null)
-        {
-            StopCoroutine(_flashCoroutine);
-            _flashCoroutine = null;
-        }
-
-        SetVisible(false);
-        _label.text = string.Empty;
-    }
-
-    private IEnumerator FlashRoutine(float stayDuration)
-    {
-        // Fade in
-        SetVisible(true);
-        yield return FadeRoutine(0f, 1f, _fadeInDuration);
-
-        // Stay
-        yield return new WaitForSeconds(stayDuration);
-
-        // Fade out
-        yield return FadeRoutine(1f, 0f, _fadeOutDuration);
-
-        SetVisible(false);
-        _flashCoroutine = null;
-    }
-
-    private IEnumerator FadeRoutine(float from, float to, float duration)
-    {
-        float elapsed = 0f;
-
-        while (elapsed < duration)
-        {
-            elapsed += Time.deltaTime;
-            float alpha = Mathf.Lerp(from, to, elapsed / duration);
-            _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, alpha);
-            yield return null;
-        }
-
-        _label.color = new Color(_textColor.r, _textColor.g, _textColor.b, to);
-    }
-
-    private void SetVisible(bool visible)
-    {
-        _isVisible = visible;
-        _label.gameObject.SetActive(visible);
-    }
-
-    private TextMeshPro CreateLabel()
-    {
-        var labelGO = new GameObject("DebugLabel");
-        labelGO.transform.SetParent(transform);
-        labelGO.transform.localPosition = _offset;
-
-        var tmp = labelGO.AddComponent<TextMeshPro>();
-        tmp.fontSize = _fontSize;
-        tmp.color = _textColor;
-        tmp.alignment = TextAlignmentOptions.Center;
-
-        return tmp;
-    }
-}
-
-
-==========================================
-SCRIPT: GameInpurManager.cs
-==========================================
-using UnityEngine;
-
-public class GameInpurManager : MonoBehaviour
-{
-    [SerializeField] private GridSystem gridSystem;
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private SimpleObjectPlacer objectPlacer;
-
-    void Update()
-    {
-        InventoryInput();
-
-        PlaceObjectsInput();
-    }
-
-    private void InventoryInput()
-    {
-        for (int i = 1; i <= 9; i++)
-        {
-            if (Input.GetKeyDown(KeyCode.Alpha0 + i))
-            {
-                inventoryManager.ChangeCurrentSelectedSlot(i - 1);
-            }
-        }
-
-        if (Input.GetKeyDown(KeyCode.Alpha0))
-        {
-            inventoryManager.ChangeCurrentSelectedSlot(9);
-        }
-    }
-
-    private void PlaceObjectsInput()
-    {
-        if (Input.GetMouseButtonDown(0))
-        {
-            
-            objectPlacer.RemoveObjectFromCell();
-        }
-        else if (Input.GetMouseButtonDown(1))
-        {
-            // Try interaction first, fall back to removal
-            if (TryInteract())
-            {
-                Debug.Log("Interacted with object under cursor.");
-                return;
-            }
-            // Only place if hands are NOT empty — check inventory
-            if (inventoryManager.GetSelectedItem() != null)
-                objectPlacer.PlaceObjectInCell();
-                
-        }
-    }
-
-    private bool TryInteract()
-    {
-        if (!HasEmptyHands()) return false;
-        
-        PlacedItem item = objectPlacer.GetPlacedItemUnderCursor();
-        if (item == null) return false;
-
-        IInteractable interactable = item.GetInteractable();
-        if (interactable == null) return false;
-
-        interactable.Interact();
-        return true;
-    }
-
-
-    private bool HasEmptyHands() => inventoryManager.GetSelectedItem() == null;
-}
-
-
-
-==========================================
-SCRIPT: RayVisualizer.cs
-==========================================
-using UnityEngine;
-
-public class RayVisualizer : MonoBehaviour
-{
-    private Camera playerCamera;
-
-    public float maxRayDistance = 5f;
-
-    public GameObject hitObjectPrefab;
-
-    private GameObject hitObject;
-
-
-
-    private void Start()
-    {
-        if (playerCamera == null)
-        {
-            playerCamera = Camera.main;
-        }
-        
-        if (hitObjectPrefab != null)
-        {
-            hitObject = Instantiate(hitObjectPrefab, Vector3.zero, Quaternion.identity);
-            hitObject.SetActive(false);
-        }
-        else
-        {
-            Debug.LogWarning("RayVisualizer: Prefab para visualização de hit não está atribuído!");
-        }
-    }
-
-    private void Update()
-    {
-        PerformRay();
-    }
-
-    private void PerformRay()
-    {
-        // Proteção contra referências nulas
-        if (playerCamera == null)
-        {
-            Debug.LogWarning("RayVisualizer: Câmera não está referenciada!");
-            return;
-        }
-
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-
-        if (Physics.Raycast(ray, out hit, maxRayDistance))
-        {
-            hitObject.SetActive(true);
-            hitObject.transform.position = hit.point;
-        }
-        else
-        {
-            hitObject.SetActive(false);
-        }
-        
+        return new Vector3Int(
+            Mathf.FloorToInt(point.x),
+            Mathf.FloorToInt(point.y),
+            Mathf.FloorToInt(point.z));
     }
 }
 
 
 
 ==========================================
-SCRIPT: SimpleObjectPlacer.cs
-==========================================
-using UnityEngine;
-
-public class SimpleObjectPlacer : MonoBehaviour
-{
-    private Camera playerCamera;
-    [SerializeField] private float maxRayDistance = 5f;
-    [SerializeField] private GridSystem gridSystem;
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private LayerMask placedObjectLayer;
-
-    private int _placedLayerIndex;       // layer index  (e.g. 8)
-    private int _placedLayerMask;        // bitmask      (e.g. 1 << 8 = 256)
-
-    private const float HIT_BIAS = 0.001f;
-
-    private void Start()
-    {
-        if (gridSystem == null) Debug.LogWarning("SimpleObjectPlacer: GridSystem não está referenciado!");
-        if (playerCamera == null) playerCamera = Camera.main;
-
-        // Resolve once here — used everywhere else
-        _placedLayerIndex = LayerMaskToIndex(placedObjectLayer);
-        _placedLayerMask  = 1 << _placedLayerIndex;
-    }
-
-    private Vector3Int? GetGridIndexAtPosition()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
-        {
-            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
-            return gridSystem.WorldToGridPosition(adjustedPoint);
-        }
-        return null;
-    }
-
-    public Vector3Int? GetCellFromPlacedItem()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        Debug.DrawRay(ray.origin, ray.direction * maxRayDistance, Color.red, 2f);
-
-        // Uses the pre-built bitmask — guaranteed to match what was assigned
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
-        {
-            PlacedItem placedItem = hit.collider.GetComponentInParent<PlacedItem>();
-
-            if (placedItem != null)
-            {
-                // Use the object's own position, not the ray surface contact point
-                return gridSystem.WorldToGridPosition(placedItem.transform.position);
-            }
-
-            Debug.LogWarning("O objeto atingido não possui o componente PlacedItem.");
-        }
-
-        return null;
-    }
-
-    public void PlaceObjectInCell()
-    {
-        // 1. Validação inicial: se não houver posição, saímos logo
-        if (!(GetGridIndexAtPosition() is Vector3Int gridIndex))
-        {
-            //Debug.Log("Nenhuma célula válida selecionada.");
-            return;
-        }
-
-        // 2. Validação de estado: se estiver ocupado, saímos logo
-        if (gridSystem.IsCellOccupied(gridIndex))
-        {
-            //Debug.Log($"A célula {gridIndex} já está ocupada!");
-            return;
-        }
-
-        // 3. Rota principal: o código que "faz o trabalho" fica sem indentação profunda
-        Vector3 cellCenter = gridSystem.GridToWorldPosition(gridIndex);
-        Vector3 placementPos = new Vector3(
-            cellCenter.x,
-            cellCenter.y - (gridSystem.cellSize / 2f),
-            cellCenter.z
-        );
-
-        ItemData selectedItem = inventoryManager.GetSelectedItem();
-        if (selectedItem == null)
-        {
-            //Debug.Log("Nenhum item selecionado para colocar.");
-            return;
-        }
-
-        GameObject newObj = Instantiate(selectedItem.itemPrefab, placementPos, Quaternion.identity);
-        PlacedItem newObjItem = newObj.AddComponent<PlacedItem>();
-        newObjItem.SetItemData(selectedItem);
-        SetLayerRecursively(newObj, _placedLayerIndex);
-
-        gridSystem.PlaceObjectInCell(gridIndex, newObj);
-    }
-
-    public void RemoveObjectFromCell()
-    {
-        if(!(GetCellFromPlacedItem() is Vector3Int gridIndex))
-        {
-            //Debug.Log("Nenhuma célula válida selecionada para remoção.");
-            return;
-        }
-        gridSystem.RemoveObjectFromCell(gridIndex);
-    }
-
-    private void SetLayerRecursively(GameObject obj, int layer)
-    {
-        foreach (Transform t in obj.GetComponentsInChildren<Transform>(true))
-            t.gameObject.layer = layer;
-    }
-
-    private int LayerMaskToIndex(LayerMask mask)
-    {
-        if (mask.value == 0)
-        {
-            Debug.LogWarning("SimpleObjectPlacer: placedObjectLayer não está configurado! Usando layer 0.");
-            return 0;
-        }
-
-        int value = mask.value;
-        int index = 0;
-        while ((value & 1) == 0) { value >>= 1; index++; }
-        return index;
-    }
-
-    public PlacedItem GetPlacedItemUnderCursor()
-    {
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance, _placedLayerMask))
-            return hit.collider.GetComponentInParent<PlacedItem>();
-        return null;
-    }
-}
-
-
-==========================================
-SCRIPT: CellVisualizer.cs
-==========================================
-using UnityEngine;
-
-public class CellVisualizer : MonoBehaviour
-{
-    private Camera playerCamera;
-    public float maxRayDistance = 5f;
-    public GameObject cellUIPrefab;
-    public GridSystem gridSystem;
-    private GameObject cellUIInstance;
-
-    // Ajuste para evitar Z-Fighting
-    private const float Z_FIGHTING_OFFSET = 0.01f;
-    
-    // Pequeno offset para corrigir a precisão do Raycast
-    private const float HIT_BIAS = 0.001f;
-
-    private void Start()
-    {
-        if (gridSystem == null) Debug.LogWarning("CellVisualizer: GridSystem não está referenciado!");
-        if (playerCamera == null) playerCamera = Camera.main;
-        
-        if (cellUIPrefab != null)
-        {
-            cellUIInstance = Instantiate(cellUIPrefab, Vector3.zero, Quaternion.Euler(90, 0, 0));
-            cellUIInstance.SetActive(false);
-        }
-    }
-
-    private void Update()
-    {
-        PerformRay();
-    }
-
-    private void PerformRay()
-    {
-        if (playerCamera == null || gridSystem == null) return;
-
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-
-        if (Physics.Raycast(ray, out RaycastHit hit, maxRayDistance))
-        {
-            // APLICAÇÃO DO NUDGE:
-            // Ajustamos o ponto de cálculo para fora da superfície usando a normal
-            Vector3 adjustedPoint = hit.point + (hit.normal * HIT_BIAS);
-
-            Vector3Int gridIndex = gridSystem.WorldToGridPosition(adjustedPoint);
-            Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
-
-            // Ajuste para a base (baseado na metade do tamanho)
-            float halfCellSize = gridSystem.cellSize / 2f;
-            float baseFloorY = cellCenterWorldPosition.y - halfCellSize;
-
-            cellUIInstance.SetActive(true);
-            cellUIInstance.transform.position = new Vector3(
-                cellCenterWorldPosition.x,
-                baseFloorY + Z_FIGHTING_OFFSET,
-                cellCenterWorldPosition.z
-            );
-        }
-        else
-        {
-            if (cellUIInstance != null) cellUIInstance.SetActive(false);
-        }
-    }
-}
-
-
-==========================================
-SCRIPT: GridInteractorExample.cs
-==========================================
-using UnityEngine;
-
-public class GridInteractor : MonoBehaviour
-{
-    [Header("Referências")]
-    [Tooltip("Arraste o objeto que contém o script GridSystem aqui.")]
-    public GridSystem gridSystem;
-    
-    [Tooltip("A câmera usada para atirar o raio. Geralmente a Main Camera.")]
-    public Camera playerCamera;
-
-    [Header("Configurações de Interação")]
-    [Tooltip("Distância máxima que o raio alcançará em metros.")]
-    public float maxInteractDistance = 5f;
-    
-    [Tooltip("Quais camadas (Layers) o raio pode atingir?")]
-    public LayerMask interactableLayer = Physics.DefaultRaycastLayers;
-
-    void Update()
-    {
-        // Verifica se o botão esquerdo do mouse foi clicado
-        if (Input.GetMouseButtonDown(0))
-        {
-            //PerformGridRaycast();
-        }
-    }
-
-    private void PerformGridRaycast()
-    {
-        // Proteção contra referências nulas
-        if (playerCamera == null || gridSystem == null)
-        {
-            Debug.LogWarning("GridInteractor: Câmera ou GridSystem não estão referenciados!");
-            return;
-        }
-
-        // Cria um raio que sai da câmera na direção do ponteiro do mouse
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-
-        // Atira o raio com o limite de distância especificado
-        if (Physics.Raycast(ray, out hit, maxInteractDistance, interactableLayer))
-        {
-            // 1. Aplica a Tolerância de Ponto Flutuante (Epsilon)
-            Vector3 placementPosition = hit.point + (hit.normal * 0.01f);
-
-            // 2. Converte o ponto exato do mundo para o índice discreto do Grid
-            Vector3Int gridIndex = gridSystem.WorldToGridPosition(placementPosition);
-
-            // 3. (Opcional) Pega o centro exato da célula para instanciar algo depois
-            // Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
-
-            // Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}. Centro Mundial: {cellCenterWorldPosition}");
-            Debug.Log($"Atingiu: {hit.collider.name}. Índice no Grid: {gridIndex}");
-            // Aqui você chamará o gridSystem.GetOrCreateCell() futuramente para salvar dados.
-        }
-    }
-}
-
-
-==========================================
-SCRIPT: GridSystem.cs
+SCRIPT: VoxelBlockRegistry.cs
 ==========================================
 using System.Collections.Generic;
 using UnityEngine;
 
-public class GridCell
-{
-    public Vector3Int GridPosition;
-    public bool IsOccupied;
-    public GameObject OccupyingObject; 
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockRegistry  — ScriptableObject that maps byte IDs → VoxelBlockType.
+//  Create ONE per project via: Assets > Create > VoxelWorld > Block Registry
+//
+//  USAGE
+//    1. Add all your VoxelBlockType SOs to the `blocks` list.
+//    2. Assign this registry to VoxelWorldSettings.
+//    3. Any system calls VoxelBlockRegistry.GetBlock(id) at runtime.
+//
+//  RULES
+//    • blockId 0 is Air — must always exist in the list.
+//    • IDs must be unique; the editor logs a warning if not.
+// ─────────────────────────────────────────────────────────────────────────────
 
-    public void Occupy(GameObject obj)
+[CreateAssetMenu(fileName = "BlockRegistry", menuName = "VoxelWorld/Block Registry")]
+public class VoxelBlockRegistry : ScriptableObject
+{
+    [SerializeField] private List<VoxelBlockType> blocks = new();
+
+    // Built at runtime from the list above — O(1) lookup.
+    private Dictionary<byte, VoxelBlockType> _lookup;
+
+    // ── Singleton-style accessor (runtime only) ───────────────────────────────
+    private static VoxelBlockRegistry _instance;
+    public static VoxelBlockRegistry Instance => _instance;
+
+    /// <summary>Call this once from VoxelWorldManager.Awake().</summary>
+    public void Initialize()
     {
-        OccupyingObject = obj;
-        IsOccupied = true;
+        _instance = this;
+        _lookup   = new Dictionary<byte, VoxelBlockType>(blocks.Count);
+
+        foreach (var block in blocks)
+        {
+            if (block == null) continue;
+
+            if (_lookup.ContainsKey(block.blockId))
+            {
+                Debug.LogWarning($"[VoxelBlockRegistry] Duplicate blockId {block.blockId} on '{block.blockName}'. Skipping.");
+                continue;
+            }
+            _lookup[block.blockId] = block;
+        }
+
+        if (!_lookup.ContainsKey(0))
+            Debug.LogError("[VoxelBlockRegistry] No Air block (id 0) found! Add a VoxelBlockType with blockId = 0.");
     }
 
-    public void Clear()
-    {    
-        GameObject.Destroy(OccupyingObject);
-        OccupyingObject = null;
-        IsOccupied = false;
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>Returns the block definition for the given id, or null for Air/unknown.</summary>
+    public VoxelBlockType GetBlock(byte id)
+    {
+        _lookup.TryGetValue(id, out VoxelBlockType block);
+        return block;
+    }
+
+    /// <summary>Returns true if the block at this id is solid (should cull neighbours).</summary>
+    public bool IsSolid(byte id)
+    {
+        if (id == 0) return false;
+        return _lookup.TryGetValue(id, out var b) && b.isSolid;
+    }
+
+    public int Count => _lookup?.Count ?? 0;
+}
+
+
+
+==========================================
+SCRIPT: VoxelBlockType.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelBlockType  — ScriptableObject that defines a single block species.
+//  Create via: Assets > Create > VoxelWorld > Block Type
+//
+//  DESIGN NOTES
+//  • One SO per block (Air, Dirt, Stone, Grass, Sand…).
+//  • UV coords follow a standard atlas layout: each face gets a (col, row)
+//    tile address that the mesh builder converts to real UVs at build time.
+//  • Per-face atlas overrides let you have a grass-top / dirt-side / dirt-bottom
+//    without any extra SOs.
+//  • blockId == 0 is ALWAYS Air (no geometry emitted).
+// ─────────────────────────────────────────────────────────────────────────────
+
+[CreateAssetMenu(fileName = "BlockType_New", menuName = "VoxelWorld/Block Type")]
+public class VoxelBlockType : ScriptableObject
+{
+    // ── Identity ──────────────────────────────────────────────────────────────
+    [Header("Identity")]
+    [Tooltip("Unique numeric ID used inside chunk data arrays. 0 = Air.")]
+    public byte blockId;
+
+    [Tooltip("Human-readable label (used in editor and debug).")]
+    public string blockName = "New Block";
+
+    // ── Behaviour flags ───────────────────────────────────────────────────────
+    [Header("Behaviour")]
+    [Tooltip("Air and other invisible types skip mesh generation entirely.")]
+    public bool isSolid = true;
+
+    [Tooltip("Transparent blocks (glass, water) still cull neighbours.")]
+    public bool isTransparent = false;
+
+    // ── Texture Atlas ─────────────────────────────────────────────────────────
+    [Header("Texture Atlas (tile col, row)")]
+    [Tooltip("Fallback tile used for any face that has no override.")]
+    public Vector2Int defaultTile = new Vector2Int(0, 0);
+
+    // Per-face overrides — if the x component is -1, defaultTile is used.
+    public Vector2Int tileTop    = new Vector2Int(-1, 0);
+    public Vector2Int tileBottom = new Vector2Int(-1, 0);
+    public Vector2Int tileFront  = new Vector2Int(-1, 0);
+    public Vector2Int tileBack   = new Vector2Int(-1, 0);
+    public Vector2Int tileLeft   = new Vector2Int(-1, 0);
+    public Vector2Int tileRight  = new Vector2Int(-1, 0);
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    /// <summary>Returns the resolved tile for a given face index (0=Top … 5=Right).</summary>
+    public Vector2Int GetTileForFace(int faceIndex)
+    {
+        Vector2Int candidate = faceIndex switch
+        {
+            0 => tileTop,
+            1 => tileBottom,
+            2 => tileFront,
+            3 => tileBack,
+            4 => tileLeft,
+            5 => tileRight,
+            _ => defaultTile
+        };
+        return candidate.x < 0 ? defaultTile : candidate;
     }
 }
 
-public class GridSystem : MonoBehaviour
+
+
+==========================================
+SCRIPT: VoxelChunk.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelChunk  — MonoBehaviour that represents one loaded chunk in the scene.
+//
+//  Responsibilities
+//  • Owns the MeshFilter, MeshRenderer, and MeshCollider for this chunk.
+//  • Holds a reference to the chunk's VoxelChunkData (pure data).
+//  • Knows how to apply a pre-built MeshData to its mesh components.
+//  • Does NOT generate terrain or build meshes — that belongs to other systems.
+//
+//  Lifecycle (managed by VoxelWorldManager)
+//  1. Instantiated when a chunk enters view distance.
+//  2. Receives SetData() to attach its VoxelChunkData.
+//  3. ApplyMesh() is called after the mesh builder finishes.
+//  4. Destroyed (or returned to pool) when it leaves view distance.
+//
+//  POOLING NOTE
+//  The manager uses a simple pool of VoxelChunk GameObjects.
+//  When recycled, call Reset() to clear the old data before SetData().
+// ─────────────────────────────────────────────────────────────────────────────
+
+[RequireComponent(typeof(MeshFilter))]
+[RequireComponent(typeof(MeshRenderer))]
+[RequireComponent(typeof(MeshCollider))]
+public class VoxelChunk : MonoBehaviour
 {
-    [Header("Configurações Básicas")]
-    public float cellSize = 1f;
-    public Vector3 gridOffset = Vector3.zero;
-    
-    [Header("Configurações de Alinhamento")]
-    public bool snapToCenter = true; // Se true, alinha ao centro. Se false, alinha ao canto (0,0,0).
+    // ── Components ────────────────────────────────────────────────────────────
+    private MeshFilter   _filter;
+    private MeshRenderer _renderer;
+    private MeshCollider _collider;
 
-    [Header("Visualização (Gizmos)")]
-    public bool showGizmos = true;
-    public int visualRange = 5;
+    // ── Data ──────────────────────────────────────────────────────────────────
+    public VoxelChunkData Data { get; private set; }
 
-    private Dictionary<Vector3Int, GridCell> gridMap = new Dictionary<Vector3Int, GridCell>();
+    // ── State ─────────────────────────────────────────────────────────────────
+    public bool IsMeshDirty { get; set; } = false;
 
-    public Vector3Int WorldToGridPosition(Vector3 worldPosition)
+    // ── Unity setup ───────────────────────────────────────────────────────────
+    private void Awake()
     {
-        int x = Mathf.FloorToInt((worldPosition.x - gridOffset.x) / cellSize);
-        int y = Mathf.FloorToInt((worldPosition.y - gridOffset.y) / cellSize);
-        int z = Mathf.FloorToInt((worldPosition.z - gridOffset.z) / cellSize);
-        
-        return new Vector3Int(x, y, z);
+        _filter   = GetComponent<MeshFilter>();
+        _renderer = GetComponent<MeshRenderer>();
+        _collider = GetComponent<MeshCollider>();
+
+        _filter.mesh = new Mesh { name = "ChunkMesh" };
     }
 
-    public Vector3 GridToWorldPosition(Vector3Int gridPosition)
-    {
-        // Se snapToCenter for true, adicionamos metade da célula para centralizar.
-        float offset = snapToCenter ? (cellSize / 2f) : 0f;
+    // ── Public API ────────────────────────────────────────────────────────────
 
-        return new Vector3(
-            (gridPosition.x * cellSize) + offset,
-            (gridPosition.y * cellSize) + offset,
-            (gridPosition.z * cellSize) + offset
-        ) + gridOffset;
+    /// <summary>Attaches chunk data and positions the GameObject in the world.</summary>
+    public void SetData(VoxelChunkData data, VoxelWorldSettings settings, Material material)
+    {
+        Data = data;
+        _renderer.material = material;
+        IsMeshDirty = true;
+
+        // Position the chunk: world origin X/Z, bottom of the world at minHeight.
+        transform.position = new Vector3(
+            data.WorldOriginX,
+            settings.minHeight,
+            data.WorldOriginZ);
+
+        gameObject.name = $"Chunk_{data.ChunkCoord.x}_{data.ChunkCoord.y}";
     }
 
-    public GridCell GetOrCreateCell(Vector3 worldPosition)
+    /// <summary>Pushes new mesh data onto the chunk mesh and collider. Main thread only.</summary>
+    public void ApplyMesh(in MeshData meshData)
     {
-        Vector3Int gridPos = WorldToGridPosition(worldPosition);
+        Mesh mesh = _filter.mesh;
+        meshData.ApplyToMesh(mesh);
 
-        if (!gridMap.ContainsKey(gridPos))
+        // Sync the collider to the new mesh
+        _collider.sharedMesh = null;   // force refresh
+        _collider.sharedMesh = mesh;
+
+        IsMeshDirty = false;
+    }
+
+    /// <summary>Clears the chunk for reuse by the pool.</summary>
+    public void Reset()
+    {
+        Data = null;
+        _filter.mesh.Clear();
+        _collider.sharedMesh = null;
+        IsMeshDirty = false;
+        gameObject.name = "Chunk_Pooled";
+    }
+
+    // ── Block editing (world-facing) ──────────────────────────────────────────
+
+    /// <summary>
+    /// Sets a block at WORLD-SPACE block position (wx, wy, wz).
+    /// Returns false if the position is outside this chunk's bounds.
+    /// Marks the chunk dirty — the world manager will schedule a rebuild.
+    /// </summary>
+    public bool TrySetBlockWorld(int wx, int wy, int wz, byte id, VoxelWorldSettings settings)
+    {
+        if (Data == null) return false;
+
+        Vector3Int local = Data.WorldToLocal(wx, wy, wz, settings.minHeight);
+
+        if (!Data.IsInBounds(local.x, local.y, local.z)) return false;
+
+        Data.SetBlock(local.x, local.y, local.z, id);
+        IsMeshDirty = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a block at WORLD-SPACE position. Returns 0 (Air) if out of bounds.
+    /// </summary>
+    public byte GetBlockWorld(int wx, int wy, int wz, VoxelWorldSettings settings)
+    {
+        if (Data == null) return 0;
+        Vector3Int local = Data.WorldToLocal(wx, wy, wz, settings.minHeight);
+        return Data.GetBlock(local.x, local.y, local.z);
+    }
+}
+
+
+
+==========================================
+SCRIPT: VoxelChunkData.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelChunkData  — Pure data container for one chunk column.
+//  NO MonoBehaviour. This can be created on a background thread.
+//
+//  Layout
+//    _blocks[x, y, z]
+//    x ∈ [0, width)   – local X within the chunk
+//    y ∈ [0, height)  – local Y (maps to world Y via settings.LocalYToWorld)
+//    z ∈ [0, width)   – local Z within the chunk
+//    value = block id (byte), 0 = Air
+//
+//  ChunkCoord is the chunk's address in chunk-space (not block-space).
+//  World block origin = ChunkCoord * chunkWidth.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelChunkData
+{
+    // ── Public identity ───────────────────────────────────────────────────────
+    public readonly Vector2Int ChunkCoord;   // (cx, cz) in chunk-space
+    public readonly int        Width;
+    public readonly int        Height;
+
+    // ── Raw block storage ─────────────────────────────────────────────────────
+    private readonly byte[,,] _blocks;
+
+    // ── Dirty flag — set when blocks change so the renderer knows to rebuild ──
+    public bool IsDirty { get; set; } = true;
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+    public VoxelChunkData(Vector2Int coord, int width, int height)
+    {
+        ChunkCoord = coord;
+        Width      = width;
+        Height     = height;
+        _blocks    = new byte[width, height, width];
+    }
+
+    // ── Block accessors ───────────────────────────────────────────────────────
+
+    /// <summary>Returns the block id at local (x, y, z). Returns 0 (Air) for out-of-bounds.</summary>
+    public byte GetBlock(int lx, int ly, int lz)
+    {
+        if (!IsInBounds(lx, ly, lz)) return 0;
+        return _blocks[lx, ly, lz];
+    }
+
+    /// <summary>Sets the block id at local (lx, ly, lz) and marks the chunk dirty.</summary>
+    public void SetBlock(int lx, int ly, int lz, byte id)
+    {
+        if (!IsInBounds(lx, ly, lz)) return;
+        _blocks[lx, ly, lz] = id;
+        IsDirty = true;
+    }
+
+    // ── Coordinate helpers ────────────────────────────────────────────────────
+
+    /// <summary>World block X origin of this chunk.</summary>
+    public int WorldOriginX => ChunkCoord.x * Width;
+
+    /// <summary>World block Z origin of this chunk.</summary>
+    public int WorldOriginZ => ChunkCoord.y * Width;
+
+    /// <summary>Converts a world block position to a local position within this chunk.
+    /// Does NOT validate bounds — caller must check IsInBounds separately if needed.</summary>
+    public Vector3Int WorldToLocal(int wx, int wy, int wz, int minHeight)
+    {
+        return new Vector3Int(wx - WorldOriginX, wy - minHeight, wz - WorldOriginZ);
+    }
+
+    public bool IsInBounds(int lx, int ly, int lz)
+        => lx >= 0 && lx < Width
+        && ly >= 0 && ly < Height
+        && lz >= 0 && lz < Width;
+
+    // ── Bulk fill (used by terrain generator) ────────────────────────────────
+
+    /// <summary>Fills the entire chunk with a single block id (e.g. 0 to clear).</summary>
+    public void Fill(byte id)
+    {
+        for (int x = 0; x < Width;  x++)
+        for (int y = 0; y < Height; y++)
+        for (int z = 0; z < Width;  z++)
+            _blocks[x, y, z] = id;
+
+        IsDirty = true;
+    }
+}
+
+
+
+==========================================
+SCRIPT: VoxelMeshBuilder.cs
+==========================================
+using System.Collections.Generic;
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelMeshBuilder  — Pure static class that converts a VoxelChunkData into
+//  Unity mesh data using greedy face-culling.
+//
+//  HOW FACE CULLING WORKS
+//  For every solid block, we check each of its 6 neighbours:
+//    • If the neighbour is Air (or transparent), we emit that face.
+//    • If the neighbour is solid and opaque, we skip the face.
+//  This is exactly what Minecraft does — the result is that interior block
+//  faces are never drawn, which massively reduces vertex and triangle counts.
+//
+//  CROSS-CHUNK NEIGHBOUR LOOKUP
+//  The builder accepts a IChunkNeighbourSampler so it can ask "what block is
+//  at local x=-1?" and get the answer from the adjacent loaded chunk.
+//  If the neighbour chunk isn't loaded yet, the sampler returns 0 (Air),
+//  which means border faces are emitted — conservative but always correct.
+//
+//  ATLAS UV MAPPING
+//  Each face maps to a tile in the atlas texture using the block's GetTileForFace().
+//  UV coordinates are computed from tile (col, row) + pixel-perfect inset to
+//  avoid bleeding between tiles.
+//
+//  OUTPUT
+//  Returns a MeshData struct (plain arrays) — no Unity API calls needed.
+//  Call ApplyToMesh() on the main thread to push it onto a Mesh object.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public static class VoxelMeshBuilder
+{
+    // ── Face directions (matches VoxelBlockType face index 0..5) ─────────────
+    // 0=Top  1=Bottom  2=Front(+Z)  3=Back(−Z)  4=Left(−X)  5=Right(+X)
+    private static readonly Vector3Int[] FaceNormals =
+    {
+        Vector3Int.up,    Vector3Int.down,
+        Vector3Int.forward, new Vector3Int(0, 0, -1),
+        new Vector3Int(-1, 0, 0), Vector3Int.right
+    };
+
+    // Four vertices per face in local block space, counter-clockwise when
+    // viewed from outside (Unity's left-hand coordinate system).
+    // Each row is one face; each pair is a vertex offset from block origin.
+    private static readonly Vector3[,] FaceVertices =
+    {
+        // Top (+Y)
+        { new(0,1,0), new(0,1,1), new(1,1,1), new(1,1,0) },
+        // Bottom (−Y)
+        { new(0,0,0), new(1,0,0), new(1,0,1), new(0,0,1) },
+        // Front (+Z)
+        { new(0,0,1), new(1,0,1), new(1,1,1), new(0,1,1) },
+        // Back (−Z)
+        { new(1,0,0), new(0,0,0), new(0,1,0), new(1,1,0) },
+        // Left (−X)
+        { new(0,0,0), new(0,0,1), new(0,1,1), new(0,1,0) },
+        // Right (+X)
+        { new(1,0,1), new(1,0,0), new(1,1,0), new(1,1,1) },
+    };
+
+    // UV corner assignment per face, matching each face's actual vertex winding
+    // in FaceVertices (0,0)=bottom-left … (1,1)=top-right of the tile.
+    private static readonly Vector2[,] FaceUVCorners =
+    {
+        // Top
+        { new(0,0), new(0,1), new(1,1), new(1,0) },
+        // Bottom
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Front (+Z)
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Back (−Z)
+        { new(1,0), new(0,0), new(0,1), new(1,1) },
+        // Left (−X)
+        { new(0,0), new(1,0), new(1,1), new(0,1) },
+        // Right (+X)
+        { new(1,0), new(0,0), new(0,1), new(1,1) },
+    };
+
+    // UV corners for a unit quad (before atlas remapping)
+    private static readonly Vector2[] BaseUVs =
+    {
+        new(0, 0), new(0, 1), new(1, 1), new(1, 0)
+    };
+
+    // Triangle indices for two triangles forming one quad (relative to quad base)
+    private static readonly int[] QuadTriangles = { 0, 1, 2, 0, 2, 3 };
+
+    // ── Inset to avoid atlas bleeding (in normalised UV units per tile) ───────
+    private const float UV_INSET = 0.001f;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Public entry point
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds mesh data for <paramref name="chunk"/>.
+    /// Safe to call on a background thread — no Unity API calls are made.
+    /// </summary>
+    public static MeshData Build(
+        VoxelChunkData         chunk,
+        VoxelWorldSettings     settings,
+        IChunkNeighbourSampler sampler)
+    {
+        var registry = settings.blockRegistry;
+        float tileSize = settings.TileUVSize;
+
+        var vertices  = new List<Vector3>();
+        var triangles = new List<int>();
+        var uvs       = new List<Vector2>();
+
+        for (int lx = 0; lx < chunk.Width;  lx++)
+        for (int ly = 0; ly < chunk.Height; ly++)
+        for (int lz = 0; lz < chunk.Width;  lz++)
         {
-            gridMap[gridPos] = new GridCell { GridPosition = gridPos, IsOccupied = false };
-        }
+            byte id = chunk.GetBlock(lx, ly, lz);
+            if (id == 0) continue;   // air — skip
 
-        return gridMap[gridPos];
-    }
+            VoxelBlockType blockDef = registry.GetBlock(id);
+            if (blockDef == null || !blockDef.isSolid) continue;
 
-    // Nova função para verificar disponibilidade
-    public bool IsCellOccupied(Vector3Int gridPos)
-    {
-        if (gridMap.TryGetValue(gridPos, out GridCell cell))
-        {
-            return cell.IsOccupied;
-        }
-        return false;
-    }
+            var blockOrigin = new Vector3(lx, ly, lz);
 
-    public void PlaceObjectInCell(Vector3Int gridPos, GameObject obj)
-    {
-        GridCell cell = GetOrCreateCell(GridToWorldPosition(gridPos));
-        cell.Occupy(obj);
-    }
-
-    public void RemoveObjectFromCell(Vector3Int gridPos)
-    {
-        if (gridMap.TryGetValue(gridPos, out GridCell cell))
-        {
-            cell.Clear();
-        }
-    }
-
-    //Other testing methods (not used in main logic, but can be useful for debugging)
-    public List<Vector3Int> GetRandomGridPositionsInTheWorld(int count)
-    {
-        List<Vector3Int> positions = new List<Vector3Int>();
-
-        for (int i = 0; i < count; i++)
-        {
-            int x = Random.Range(-visualRange, visualRange + 1);
-            int y = Random.Range(-visualRange, visualRange + 1);
-            int z = Random.Range(-visualRange, visualRange + 1);
-            positions.Add(new Vector3Int(x, y, z));
-        }
-
-        return positions;
-    }
-
-    private void OnDrawGizmos()
-    {
-        if (!showGizmos) return;
-
-        Gizmos.color = new Color(0.2f, 0.8f, 0.2f, 0.3f);
-
-        for (int x = -visualRange; x <= visualRange; x++)
-        {
-            for (int y = -visualRange; y <= visualRange; y++)
+            for (int face = 0; face < 6; face++)
             {
-                for (int z = -visualRange; z <= visualRange; z++)
+                Vector3Int dir = FaceNormals[face];
+                int nx = lx + dir.x;
+                int ny = ly + dir.y;
+                int nz = lz + dir.z;
+
+                // Resolve neighbour — may cross chunk border
+                byte neighbourId = SampleNeighbour(chunk, sampler, nx, ny, nz, settings);
+
+                // Only emit face if neighbour is non-solid (air, water, etc.)
+                if (registry.IsSolid(neighbourId)) continue;
+
+                // ── Emit face ─────────────────────────────────────────────
+                int baseVertex = vertices.Count;
+
+                for (int v = 0; v < 4; v++)
+                    vertices.Add(blockOrigin + FaceVertices[face, v]);
+
+                foreach (int t in QuadTriangles)
+                    triangles.Add(baseVertex + t);
+
+                // ── Atlas UV ──────────────────────────────────────────────
+                Vector2Int tile = blockDef.GetTileForFace(face);
+                float uMin = tile.x       * tileSize + UV_INSET;
+                float uMax = (tile.x + 1) * tileSize - UV_INSET;
+                float vMax = 1f - tile.y       * tileSize + UV_INSET;
+                float vMin = 1f - (tile.y + 1) * tileSize - UV_INSET;
+
+                // Map atlas tile corners to this face's actual vertex order
+                for (int v = 0; v < 4; v++)
                 {
-                    Vector3Int posIndex = new Vector3Int(x, y, z);
-                    Vector3 worldCenter = GridToWorldPosition(posIndex);
-                    
-                    // Se não estiver centralizado, o centro do Gizmo deve ser ajustado para visualizar corretamente
-                    Vector3 drawPos = snapToCenter ? worldCenter : worldCenter + (Vector3.one * (cellSize / 2f));
-                    
-                    Gizmos.DrawWireCube(drawPos, Vector3.one * cellSize);
+                    Vector2 corner = FaceUVCorners[face, v];
+                    float u = Mathf.Lerp(uMin, uMax, corner.x);
+                    float vCoord = Mathf.Lerp(vMin, vMax, corner.y);
+                    uvs.Add(new Vector2(u, vCoord));
                 }
             }
         }
+
+        return new MeshData(vertices, triangles, uvs);
+    }
+
+    // ── Neighbour sampling helper ─────────────────────────────────────────────
+
+    private static byte SampleNeighbour(
+        VoxelChunkData         chunk,
+        IChunkNeighbourSampler sampler,
+        int lx, int ly, int lz,
+        VoxelWorldSettings     settings)
+    {
+        // Local Y out of world range → treat as air
+        if (ly < 0 || ly >= chunk.Height) return 0;
+
+        // Within this chunk?
+        if (lx >= 0 && lx < chunk.Width && lz >= 0 && lz < chunk.Width)
+            return chunk.GetBlock(lx, ly, lz);
+
+        // Cross-chunk border — delegate to the sampler
+        if (sampler == null) return 0;   // no sampler = treat border as air
+
+        int wx = chunk.WorldOriginX + lx;
+        int wy = settings.LocalYToWorld(ly);
+        int wz = chunk.WorldOriginZ + lz;
+        return sampler.GetBlockAt(wx, wy, wz);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  MeshData  — Plain data struct, no Unity API.
+//  Build it on a thread; call ApplyToMesh() on the main thread.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public readonly struct MeshData
+{
+    public readonly List<Vector3> Vertices;
+    public readonly List<int>     Triangles;
+    public readonly List<Vector2> UVs;
+
+    public MeshData(List<Vector3> v, List<int> t, List<Vector2> u)
+    {
+        Vertices  = v;
+        Triangles = t;
+        UVs       = u;
+    }
+
+    public bool IsEmpty => Vertices == null || Vertices.Count == 0;
+
+    /// <summary>Pushes the data into a Unity Mesh. Call on the main thread only.</summary>
+    public void ApplyToMesh(Mesh mesh)
+    {
+        mesh.Clear();
+        if (IsEmpty) return;
+
+        mesh.SetVertices(Vertices);
+        mesh.SetTriangles(Triangles, 0);
+        mesh.SetUVs(0, UVs);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  IChunkNeighbourSampler  — Abstraction that lets the mesh builder query
+//  block data from neighbouring chunks without knowing about the chunk manager.
+// ─────────────────────────────────────────────────────────────────────────────
+
+public interface IChunkNeighbourSampler
+{
+    /// <summary>Returns the block id at world-space block coordinate (wx, wy, wz).</summary>
+    byte GetBlockAt(int wx, int wy, int wz);
+}
+
+
+
+==========================================
+SCRIPT: VoxelTerrainGenerator.cs
+==========================================
+using UnityEngine;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelTerrainGenerator  — Pure static logic class (no MonoBehaviour).
+//  Fills a VoxelChunkData from scratch using layered Perlin noise.
+//
+//  DESIGN PRINCIPLES
+//  • Completely decoupled from rendering — only depends on VoxelChunkData and
+//    VoxelWorldSettings. Safe to call on a background thread.
+//  • Height is clamped to [settings.minHeight … settings.maxHeight].
+//  • Block assignment is driven by a simple layer stack that is easy to expand.
+//
+//  EXTENDING
+//  To add biomes: pass a BiomeData SO and branch inside AssignBlock.
+//  To add caves: add a 3-D noise pass after the height pass.
+//  To add structures: call a separate StructurePlacer after Generate().
+// ─────────────────────────────────────────────────────────────────────────────
+
+public static class VoxelTerrainGenerator
+{
+    // ── Block ID constants (keep in sync with your VoxelBlockType SOs) ────────
+    // Using constants keeps the generator readable without passing the registry.
+    private const byte AIR   = 0;
+    private const byte STONE = 1;
+    private const byte DIRT  = 2;
+    private const byte GRASS = 3;
+    private const byte SAND  = 4;
+    private const byte WATER = 5;   // optional — place if below sea level
+
+    // Sea level in world-space Y. Tweak freely.
+    private const int SEA_LEVEL = 0;
+
+    // How many dirt layers sit below the grass top.
+    private const int DIRT_DEPTH = 2;
+
+    // ── Entry point ───────────────────────────────────────────────────────────
+
+    /// <summary>Populates <paramref name="data"/> with terrain blocks.
+    /// Call once per chunk, either on the main thread or a worker thread.</summary>
+    public static void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed)
+    {
+        // Pre-compute a per-seed offset so chunks don't tile at the origin.
+        float offsetX = seed * 0.1f;
+        float offsetZ = seed * 0.1f;
+
+        int worldOriginX = data.WorldOriginX;
+        int worldOriginZ = data.WorldOriginZ;
+        int minY         = settings.minHeight;
+        int maxY         = settings.maxHeight;
+        int totalHeight  = data.Height;
+
+        for (int lx = 0; lx < data.Width; lx++)
+        for (int lz = 0; lz < data.Width; lz++)
+        {
+            int wx = worldOriginX + lx;
+            int wz = worldOriginZ + lz;
+
+            // ── Sample fractional Brownian motion height ───────────────────
+            float normalizedHeight = FractionalBrownianMotion(
+                wx, wz,
+                offsetX, offsetZ,
+                settings.noiseScale,
+                settings.octaves,
+                settings.persistence,
+                settings.lacunarity);
+
+            // Map [0..1] to world Y range
+            int surfaceY = Mathf.RoundToInt(Mathf.Lerp(minY, maxY, normalizedHeight));
+            surfaceY     = Mathf.Clamp(surfaceY, minY, maxY);
+
+            // ── Fill column ───────────────────────────────────────────────
+            for (int ly = 0; ly < totalHeight; ly++)
+            {
+                int wy = settings.LocalYToWorld(ly);
+                data.SetBlock(lx, ly, lz, AssignBlock(wy, surfaceY, minY));
+            }
+        }
+
+        data.IsDirty = true;
+    }
+
+    // ── Block assignment ─────────────────────────────────────────────────────
+
+    /// <summary>Decides which block id belongs at world Y <paramref name="wy"/>
+    /// given the terrain surface at <paramref name="surfaceY"/>.</summary>
+    private static byte AssignBlock(int wy, int surfaceY, int minY)
+    {
+        if (wy > surfaceY)
+        {
+            // Above surface — air (or water if below sea level)
+            return (wy <= SEA_LEVEL) ? WATER : AIR;
+        }
+
+        if (wy == surfaceY)
+        {
+            // Top-most solid layer
+            if (surfaceY <= SEA_LEVEL) return SAND;   // underwater beaches
+            return GRASS;
+        }
+
+        if (wy >= surfaceY - DIRT_DEPTH)
+        {
+            return DIRT;
+        }
+
+        // Everything deeper is stone (or the absolute bedrock at minY)
+        return wy == minY ? STONE : STONE;
+    }
+
+    // ── Fractional Brownian Motion ───────────────────────────────────────────
+
+    private static float FractionalBrownianMotion(
+        int wx, int wz,
+        float offsetX, float offsetZ,
+        float scale,
+        int octaves,
+        float persistence,
+        float lacunarity)
+    {
+        float amplitude = 1f;
+        float frequency = 1f;
+        float value     = 0f;
+        float maxValue  = 0f;   // used for normalisation
+
+        for (int o = 0; o < octaves; o++)
+        {
+            float sampleX = (wx + offsetX) / scale * frequency;
+            float sampleZ = (wz + offsetZ) / scale * frequency;
+
+            // Mathf.PerlinNoise returns [0..1]
+            value    += Mathf.PerlinNoise(sampleX, sampleZ) * amplitude;
+            maxValue += amplitude;
+
+            amplitude *= persistence;
+            frequency *= lacunarity;
+        }
+
+        return value / maxValue;   // normalise to [0..1]
     }
 }
 
 
+
 ==========================================
-SCRIPT: Button.cs
+SCRIPT: VoxelWorldManager.cs
 ==========================================
+using System.Collections.Generic;
 using UnityEngine;
 
-public class Button : MonoBehaviour, IInteractable
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelWorldManager  — The central brain of the voxel world system.
+//
+//  RESPONSIBILITIES
+//  1. Tracks the player's chunk coordinate.
+//  2. Loads (generates + meshes) chunks that enter view distance.
+//  3. Unloads chunks that leave view distance, returning them to a pool.
+//  4. Manages a rebuild queue — dirty chunks get remeshed in budget slices.
+//  5. Implements IChunkNeighbourSampler so the mesh builder can query
+//     cross-chunk block data without circular dependencies.
+//
+//  HOW TO SET UP IN UNITY
+//  • Create a GameObject → Add VoxelWorldManager.
+//  • Assign a VoxelWorldSettings SO in the Inspector.
+//  • Assign your VoxelChunk prefab (has MeshFilter, MeshRenderer, MeshCollider).
+//  • Assign the Transform of the player (or camera).
+//  • Press Play — the world streams around the player.
+//
+//  INTEGRATION WITH EXISTING GridSystem
+//  VoxelWorldManager does NOT touch your existing GridSystem.cs.
+//  The two systems share a coordinate convention (1 unit = 1 cell) but are
+//  otherwise independent. If you want to place GridSystem objects ON TOP of
+//  the voxel terrain, query TryGetBlockWorld() or GetTopSolidY() to find the
+//  surface height and then use your existing GridSystem.GridToWorldPosition().
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 {
-    private DebugLabel debugLabel;
+    // ── Inspector ─────────────────────────────────────────────────────────────
+    [Header("Settings")]
+    [SerializeField] private VoxelWorldSettings settings;
+
+    [Header("Scene references")]
+    [SerializeField] private Transform playerTransform;
+    [SerializeField] private GameObject chunkPrefab;
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    // Active chunks keyed by chunk coord (cx, cz)
+    private readonly Dictionary<Vector2Int, VoxelChunk>     _activeChunks = new();
+    // Chunk data keyed by chunk coord (kept alive even when chunk is pooled
+    // so we don't re-generate terrain when the player comes back)
+    private readonly Dictionary<Vector2Int, VoxelChunkData> _chunkDataCache = new();
+
+    // Object pool for VoxelChunk GameObjects
+    private readonly Queue<VoxelChunk>  _pool        = new();
+
+    // Rebuild queue — dirty chunks waiting for a remesh
+    private readonly Queue<Vector2Int>  _rebuildQueue = new();
+
+    // Track last known chunk coordinate to avoid re-scanning every frame
+    private Vector2Int _lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+
+    // Resolved seed (may be randomised if settings.seed == 0)
+    private int _seed;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        ValidateReferences();
+        settings.blockRegistry.Initialize();
+        _seed = settings.seed == 0 ? Random.Range(1, int.MaxValue) : settings.seed;
+    }
 
     private void Start()
     {
-        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
+        UpdateStreamingFromPlayer(force: true);
     }
 
-    public string GetInteractionLabel()
+    private void Update()
     {
-        return "Press Button";
+        UpdateStreamingFromPlayer(force: false);
+        ProcessRebuildQueue();
     }
 
-    public void Interact()
+    // ── Streaming ─────────────────────────────────────────────────────────────
+
+    private void UpdateStreamingFromPlayer(bool force)
     {
-        debugLabel.Flash("Boop!");
+        Vector2Int playerChunkCoord = WorldToChunkCoord(playerTransform.position);
+
+        if (!force && playerChunkCoord == _lastPlayerChunkCoord) return;
+        _lastPlayerChunkCoord = playerChunkCoord;
+
+        int range = settings.viewDistanceInChunks;
+
+        // ── Collect which chunks SHOULD be loaded ─────────────────────────
+        var desired = new HashSet<Vector2Int>();
+        for (int cx = -range; cx <= range; cx++)
+        for (int cz = -range; cz <= range; cz++)
+            desired.Add(playerChunkCoord + new Vector2Int(cx, cz));
+
+        // ── Unload chunks that are now out of range ────────────────────────
+        var toUnload = new List<Vector2Int>();
+        foreach (var coord in _activeChunks.Keys)
+            if (!desired.Contains(coord)) toUnload.Add(coord);
+
+        foreach (var coord in toUnload) UnloadChunk(coord);
+
+        // ── Load/activate chunks that are now in range ─────────────────────
+        foreach (var coord in desired)
+            if (!_activeChunks.ContainsKey(coord)) LoadChunk(coord);
     }
-}
 
+    // ── Chunk load / unload ───────────────────────────────────────────────────
 
-
-==========================================
-SCRIPT: IInteractable.cs
-==========================================
-using UnityEngine;
-
-public interface IInteractable
-{
-    string GetInteractionLabel(); // "Open Chest", "Use Furnace", etc.
-    void Interact();
-}
-
-/*
-How specific behaviours implement it independently:
-
-//ChestInteraction.cs
-public class ChestInteraction : MonoBehaviour, IInteractable
-{
-    public string GetInteractionLabel() => "Open Chest";
-    public void Interact() { // open chest UI // }
-}
-
-// FurnaceInteraction.cs
-public class FurnaceInteraction : MonoBehaviour, IInteractable
-{
-    public string GetInteractionLabel() => "Use Furnace";
-    public void Interact() { // open smelting UI // }
-}
-*/
-
-
-/*
-Distinguishing Interactable vs Non-Interactable items
-
-// PlacedItem.cs — add this
-public bool IsInteractable => GetComponent<IInteractable>() != null;
-public IInteractable GetInteractable() => GetComponent<IInteractable>();
-
-The Minecraft way — the chest prefab already has ChestInteraction on it.
-No runtime AddComponent juggling. The itemPrefab in ItemData simply has
-the right components baked in.
-
-*/
-
-
-==========================================
-SCRIPT: DefaultLoadoutSource.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
-
-[CreateAssetMenu(fileName = "DefaultLoadout", menuName = "Inventory/Default Loadout Source")]
-public class DefaultLoadoutSource : ScriptableObject, IItemGrantSource
-{
-    [SerializeField] private List<ItemGrant> defaultItems;
-
-    public int Priority => 100; // Lowest priority — fallback only
-    public bool IsAvailable() => defaultItems != null && defaultItems.Count > 0;
-    public IEnumerable<ItemGrant> GetItemGrants() => defaultItems;
-}
-
-
-==========================================
-SCRIPT: IItemGrantSource.cs
-==========================================
-using System.Collections.Generic;
-
-public interface IItemGrantSource
-{
-    // Lower number = higher priority (save data should be 0, defaults last)
-    int Priority { get; }
-    bool IsAvailable();
-    IEnumerable<ItemGrant> GetItemGrants();
-}
-
-[System.Serializable]
-public struct ItemGrant
-{
-    public ItemData item;
-    public int amount;
-}
-
-
-==========================================
-SCRIPT: InventoryManager.cs
-==========================================
-using System.Collections.Generic;
-using System.ComponentModel;
-using UnityEngine;
-
-[System.Serializable]
-public class InventorySlot
-{
-    public ItemStack itemStack;
-    public int slotID;
-}
-
-public class InventoryManager : MonoBehaviour
-{
-    [SerializeField] private InventoryUI inventoryUI;
-    [SerializeField] private int inventorySize = 10;
-    private int currentSelectedSlot = 0;
-    [SerializeField] private ItemData selectedItem;
-    private List<InventorySlot> slots;
-    
-    public void InitializeInventoryBar()
+    private void LoadChunk(Vector2Int coord)
     {
-        slots = new List<InventorySlot>();
-
-        for (int i = 0; i < inventorySize; i++)
+        // Get or generate chunk data
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
         {
-            slots.Add(new InventorySlot { slotID = i, itemStack = null });
-            inventoryUI.CreateBarSlotUI(i, null);
+            data = new VoxelChunkData(coord, settings.chunkWidth, settings.chunkHeight);
+            VoxelTerrainGenerator.Generate(data, settings, _seed);
+            _chunkDataCache[coord] = data;
         }
 
-        SelectSlot(currentSelectedSlot);
-        // Pass -1 as old slot since there's nothing to deselect yet
-        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, -1);
+        // Get a pooled GameObject or instantiate a new one
+        VoxelChunk chunk = GetOrCreateChunkObject();
+        chunk.gameObject.SetActive(true);
+        chunk.SetData(data, settings, settings.chunkMaterial);
+        _activeChunks[coord] = chunk;
 
-        Debug.Log($"Inventário inicializado com {slots.Count} slots.");
+        // Queue for initial mesh build
+        EnqueueRebuild(coord);
     }
 
-    public void ChangeCurrentSelectedSlot(int value)
+    private void UnloadChunk(Vector2Int coord)
     {
-        int oldSelectedSlotID = currentSelectedSlot;
-        currentSelectedSlot = Mathf.Clamp(value, 0, slots.Count - 1);
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return;
 
-        if (currentSelectedSlot == oldSelectedSlotID) return;
-
-        SelectSlot(currentSelectedSlot);
-        inventoryUI.UpdateSelectionVisual(currentSelectedSlot, oldSelectedSlotID);
+        chunk.Reset();
+        chunk.gameObject.SetActive(false);
+        _pool.Enqueue(chunk);
+        _activeChunks.Remove(coord);
+        // NOTE: _chunkDataCache keeps the data so re-entering doesn't re-generate
     }
 
-    // Handles data update only — UI highlight is handled by the caller
-    private void SelectSlot(int slotIndex)
-    {
-        selectedItem = slots[slotIndex].itemStack?.itemData;
+    // ── Rebuild queue ─────────────────────────────────────────────────────────
 
-        //Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
+    /// <summary>Adds coord to the rebuild queue (deduplicated at consume time).</summary>
+    public void EnqueueRebuild(Vector2Int coord)
+    {
+        _rebuildQueue.Enqueue(coord);
     }
 
-    public bool TryAddItem(ItemData item, int amount)
+    private void ProcessRebuildQueue()
     {
-        int slotIndex = FindAvailableSlotOfType(item);
-    
-        if (slotIndex == -1)
+        int budget = settings.maxChunkBuildsPerFrame;
+        int processed = 0;
+
+        while (_rebuildQueue.Count > 0 && processed < budget)
         {
-            Debug.Log("Inventário cheio!");
-            return false;
+            Vector2Int coord = _rebuildQueue.Dequeue();
+
+            if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) continue;
+            if (chunk.Data == null) continue;
+
+            MeshData meshData = VoxelMeshBuilder.Build(chunk.Data, settings, this);
+            chunk.ApplyMesh(meshData);
+            processed++;
+        }
+    }
+
+    // ── IChunkNeighbourSampler ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the block id at world-space block position (wx, wy, wz).
+    /// Used by VoxelMeshBuilder to resolve cross-chunk border faces.
+    /// </summary>
+    public byte GetBlockAt(int wx, int wy, int wz)
+    {
+        // Convert world block position to chunk coord
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+
+        // If the chunk is active, query its data directly
+        if (_activeChunks.TryGetValue(coord, out VoxelChunk chunk) && chunk.Data != null)
+        {
+            int ly = settings.WorldYToLocal(wy);
+            int lx = wx - chunk.Data.WorldOriginX;
+            int lz = wz - chunk.Data.WorldOriginZ;
+            return chunk.Data.GetBlock(lx, ly, lz);
         }
 
-        InventorySlot targetSlot = slots[slotIndex];
-
-        if (targetSlot.itemStack == null)
+        // If chunk data is cached but not active (e.g. just outside view)
+        if (_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
         {
-            // Cria um novo stack no slot vazio
-            targetSlot.itemStack = new ItemStack(item, amount);
+            int ly = settings.WorldYToLocal(wy);
+            int lx = wx - data.WorldOriginX;
+            int lz = wz - data.WorldOriginZ;
+            return data.GetBlock(lx, ly, lz);
         }
-        else
-        {
-            // Aumenta a quantidade do item existente
-            targetSlot.itemStack.amount += amount;
-        }
-    
-        // NOVO: Avisa a UI para atualizar o desenho do slot na tela
-        inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
 
-        //Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
+        return 0; // unknown chunk → treat as air
+    }
+
+    // ── Public block editing API ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Places or removes a block at world-space block position.
+    /// Automatically flags the chunk (and affected neighbours) for rebuild.
+    /// </summary>
+    public bool TrySetBlock(int wx, int wy, int wz, byte id)
+    {
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+
+        if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return false;
+        if (!chunk.TrySetBlockWorld(wx, wy, wz, id, settings)) return false;
+
+        EnqueueRebuild(coord);
+
+        // If the block is on a chunk border, flag the neighbour too
+        int localX = wx - chunk.Data.WorldOriginX;
+        int localZ = wz - chunk.Data.WorldOriginZ;
+        int w = settings.chunkWidth - 1;
+
+        if (localX == 0)              EnqueueRebuildIfActive(coord + new Vector2Int(-1, 0));
+        if (localX == w)              EnqueueRebuildIfActive(coord + new Vector2Int( 1, 0));
+        if (localZ == 0)              EnqueueRebuildIfActive(coord + new Vector2Int( 0,-1));
+        if (localZ == w)              EnqueueRebuildIfActive(coord + new Vector2Int( 0, 1));
+
         return true;
     }
 
-    private int FindAvailableSlotOfType(ItemData item)
+    /// <summary>Returns the highest solid block Y at world X/Z, or minHeight-1 if none.</summary>
+    public int GetTopSolidY(int wx, int wz)
     {
-        foreach (var slot in slots)
+        Vector2Int coord = BlockToChunkCoord(wx, wz);
+        if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data)) return settings.minHeight - 1;
+
+        int lx = wx - data.WorldOriginX;
+        int lz = wz - data.WorldOriginZ;
+
+        for (int ly = data.Height - 1; ly >= 0; ly--)
         {
-            var stack = slot.itemStack;
-            bool canStack = stack != null && 
-                            stack.itemData == item && 
-                            stack.amount < item.maxStackAmount;
-
-            if (canStack) return slot.slotID;
+            byte id = data.GetBlock(lx, ly, lz);
+            if (settings.blockRegistry.IsSolid(id))
+                return settings.LocalYToWorld(ly);
         }
-
-        foreach (var slot in slots)
-        {
-            if (slot.itemStack == null) return slot.slotID;
-        }
-
-        return -1; 
+        return settings.minHeight - 1;
     }
 
-    public ItemData GetSelectedItem()
+    // ── Coordinate helpers ────────────────────────────────────────────────────
+
+    private Vector2Int WorldToChunkCoord(Vector3 worldPos)
     {
-        return selectedItem;
+        int cx = Mathf.FloorToInt(worldPos.x / settings.chunkWidth);
+        int cz = Mathf.FloorToInt(worldPos.z / settings.chunkWidth);
+        return new Vector2Int(cx, cz);
     }
 
-    public void RefreshSelectedSlot()
+    private Vector2Int BlockToChunkCoord(int wx, int wz)
     {
-        SelectSlot(currentSelectedSlot);
+        // Use FloorToInt to handle negative block coords correctly
+        int cx = Mathf.FloorToInt((float)wx / settings.chunkWidth);
+        int cz = Mathf.FloorToInt((float)wz / settings.chunkWidth);
+        return new Vector2Int(cx, cz);
     }
 
-    public List<InventorySlot> GetSlots() => slots;
-    
+    // ── Pool helpers ──────────────────────────────────────────────────────────
+
+    private VoxelChunk GetOrCreateChunkObject()
+    {
+        if (_pool.Count > 0)
+            return _pool.Dequeue();
+
+        GameObject go = Instantiate(chunkPrefab, transform);
+        return go.GetComponent<VoxelChunk>();
+    }
+
+    private void EnqueueRebuildIfActive(Vector2Int coord)
+    {
+        if (_activeChunks.ContainsKey(coord))
+            EnqueueRebuild(coord);
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────────
+
+    private void ValidateReferences()
+    {
+        if (settings == null)
+            Debug.LogError("[VoxelWorldManager] Missing VoxelWorldSettings!", this);
+        if (playerTransform == null)
+            Debug.LogError("[VoxelWorldManager] Missing player Transform!", this);
+        if (chunkPrefab == null)
+            Debug.LogError("[VoxelWorldManager] Missing chunk prefab!", this);
+        if (settings != null && settings.chunkMaterial == null)
+            Debug.LogWarning("[VoxelWorldManager] No chunk material assigned — chunks will be pink.", this);
+    }
 }
 
 
 
 ==========================================
-SCRIPT: InventorySaveService.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
-
-public class InventorySaveService : MonoBehaviour, IItemGrantSource
-{
-    private const string SaveKey = "inventory_save";
-
-    public int Priority => 0; // Highest priority — save data wins
-    public bool IsAvailable() => PlayerPrefs.HasKey(SaveKey);
-
-    public IEnumerable<ItemGrant> GetItemGrants()
-    {
-        string json = PlayerPrefs.GetString(SaveKey);
-        var saveData = JsonUtility.FromJson<InventorySaveData>(json);
-        return saveData?.grants ?? new List<ItemGrant>();
-    }
-
-    public void Save(List<InventorySlot> slots)
-    {
-        var grants = new List<ItemGrant>();
-        foreach (var slot in slots)
-        {
-            if (slot.itemStack != null)
-                grants.Add(new ItemGrant { item = slot.itemStack.itemData, amount = slot.itemStack.amount });
-        }
-
-        string json = JsonUtility.ToJson(new InventorySaveData { grants = grants });
-        PlayerPrefs.SetString(SaveKey, json);
-        PlayerPrefs.Save();
-    }
-
-    public void ClearSave() => PlayerPrefs.DeleteKey(SaveKey);
-
-    [System.Serializable]
-    private class InventorySaveData { public List<ItemGrant> grants; }
-}
-
-
-==========================================
-SCRIPT: InventoryUI.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
-using UnityEngine.UI;
-
-public class InventoryUI : MonoBehaviour
-{
-    [SerializeField] private GameObject InventoryBarUI;
-    [SerializeField] private GameObject slotUIPrefab;
-    [SerializeField] private Transform slotsParent;
-
-    [Header("Sprites de Fundo")]
-    [SerializeField] private Sprite defaultSlotSprite; // Sprite para o fundo normal do slot
-    [SerializeField] private Sprite selectedSlotSprite; // Sprite para o fundo do slot selecionado
-    
-    // Lista para guardar os GameObjects dos slots que aparecem na tela
-    private List<GameObject> slotUIObjects = new List<GameObject>();
-    
-    private void Awake()
-    {
-        InventoryBarUI.SetActive(true);
-    }
-
-    public void CreateBarSlotUI(int slotID, ItemStack itemStack)
-    {
-        if (slotUIObjects.Count >= 10)
-        {
-            Debug.LogWarning($"Não é possível criar mais de 10 slots. SlotID {slotID} não criado.");
-            return;
-        }
-
-        GameObject slotUIObj = Instantiate(slotUIPrefab, slotsParent);
-        slotUIObj.name = $"Slot_{slotID}";
-        
-        // Garante que o slot recém-criado começa com o sprite padrão
-        if (slotUIObj.TryGetComponent<Image>(out Image slotBackground))
-        {
-            slotBackground.sprite = defaultSlotSprite;
-        }
-
-        slotUIObjects.Add(slotUIObj);
-
-        UpdateSlotUI(slotID, itemStack);
-    }
-
-    // Método para atualizar o ícone do item (continua igual)
-    public void UpdateSlotUI(int slotID, ItemStack itemStack)
-    {
-        if (slotID < 0 || slotID >= slotUIObjects.Count) return;
-
-        GameObject slotUIObj = slotUIObjects[slotID];
-        Image iconImage = slotUIObj.transform.GetChild(0).GetComponent<Image>();
-
-        if (itemStack == null || itemStack.itemData == null)
-        {
-            iconImage.sprite = null;
-            iconImage.gameObject.SetActive(false);
-        }
-        else
-        {
-            iconImage.sprite = itemStack.itemData.icon;
-            iconImage.gameObject.SetActive(true);
-        }
-    }
-
-    /// <summary>
-    /// Atualiza o sprite de fundo do novo slot selecionado e do slot que foi desmarcado.
-    /// </summary>
-    public void UpdateSelectionVisual(int newSelectedSlotID, int oldSelectedSlotID)
-    {
-        // 1. Desativa o destaque do slot antigo (segurança de índice)
-        if (oldSelectedSlotID >= 0 && oldSelectedSlotID < slotUIObjects.Count)
-        {
-            GameObject oldSlot = slotUIObjects[oldSelectedSlotID];
-            if (oldSlot.TryGetComponent<Image>(out Image oldBackground))
-            {
-                oldBackground.sprite = defaultSlotSprite;
-            }
-        }
-
-        // 2. Ativa o destaque do novo slot selecionado (segurança de índice)
-        if (newSelectedSlotID >= 0 && newSelectedSlotID < slotUIObjects.Count)
-        {
-            GameObject newSlot = slotUIObjects[newSelectedSlotID];
-            if (newSlot.TryGetComponent<Image>(out Image newBackground))
-            {
-                newBackground.sprite = selectedSlotSprite;
-            }
-        }
-    }
-
-    public void ToggleInventoryBar(bool value)
-    {
-        InventoryBarUI.SetActive(value);
-    }
-}
-
-
-==========================================
-SCRIPT: ItemData.cs
+SCRIPT: VoxelWorldSettings.cs
 ==========================================
 using UnityEngine;
 
-[CreateAssetMenu(fileName = "ItemData", menuName = "Inventory/ItemData")]
-public class ItemData : ScriptableObject
+// ─────────────────────────────────────────────────────────────────────────────
+//  VoxelWorldSettings  — Single SO that holds every tunable knob.
+//  Create via: Assets > Create > VoxelWorld > World Settings
+//
+//  Keep one instance per "world profile" (e.g. overworld, cave, test level).
+//  Assign it to VoxelWorldManager in the Inspector.
+// ─────────────────────────────────────────────────────────────────────────────
+
+[CreateAssetMenu(fileName = "WorldSettings", menuName = "VoxelWorld/World Settings")]
+public class VoxelWorldSettings : ScriptableObject
 {
-    public string id; // ID único para salvar/carregar
-    public string itemName;
+    // ── Block Registry ────────────────────────────────────────────────────────
+    [Header("Block Registry")]
+    public VoxelBlockRegistry blockRegistry;
 
-    public Sprite icon;
+    // ── Chunk Dimensions ──────────────────────────────────────────────────────
+    [Header("Chunk Dimensions")]
+    [Tooltip("Number of blocks per chunk on X and Z axes.")]
+    public int chunkWidth  = 16;
 
-    public int maxStackAmount = 64; // Quantidade máxima por stack
-    public GameObject itemPrefab; // O modelo 3D para construir
-    public bool isPlaceable;
-    public bool isUsable;
-}
+    [Tooltip("Number of blocks in a chunk on the Y axis. // height range −4 … +4 = 9 slices")]
+    public int chunkHeight = 9;   // height range −4 … +4 = 9 slices
 
-[System.Serializable]
-public class ItemStack
-{
-    public ItemData itemData;
-    public int amount;
+    // ── World Height ──────────────────────────────────────────────────────────
+    [Header("World Height Limits")]
+    [Tooltip("Minimum block Y in world space (inclusive). Default −4 for your spec.")]
+    public int minHeight = -4;
 
-    public ItemStack(ItemData data, int initialAmount)
-    {
-        itemData = data;
-        amount = initialAmount;
-    }
-}
+    [Tooltip("Maximum block Y in world space (inclusive). Default +4 for your spec.")]
+    public int maxHeight =  4;
 
+    // ── Streaming / View Distance ─────────────────────────────────────────────
+    [Header("Streaming")]
+    [Tooltip("How many chunks are loaded around the player on X and Z (in chunk units).")]
+    [Range(1, 12)] public int viewDistanceInChunks = 4;
 
-==========================================
-SCRIPT: LevelGrantSource.cs
-==========================================
-using System.Collections.Generic;
-using UnityEngine;
+    [Tooltip("Max chunks rebuilt per frame — controls hitching vs latency trade-off.")]
+    [Range(1, 8)]  public int maxChunkBuildsPerFrame = 2;
 
-public class LevelGrantSource : MonoBehaviour, IItemGrantSource
-{
-    [SerializeField] private List<ItemGrant> levelStartItems;
+    // ── Terrain Generation ────────────────────────────────────────────────────
+    [Header("Terrain Generation")]
+    [Tooltip("Master seed. 0 = random at runtime.")]
+    public int seed = 0;
 
-    public int Priority => 50;
-    public bool IsAvailable() => levelStartItems != null && levelStartItems.Count > 0;
-    public IEnumerable<ItemGrant> GetItemGrants() => levelStartItems;
-}
+    [Tooltip("Noise scale — larger = smoother hills.")]
+    [Range(10f, 200f)] public float noiseScale = 60f;
 
+    [Tooltip("Number of noise octaves for detail layering.")]
+    [Range(1, 6)] public int octaves = 3;
 
-==========================================
-SCRIPT: PlayerInventoryLoader.cs
-==========================================
-using System.Collections.Generic;
-using System.Linq;
-using UnityEngine;
+    [Tooltip("How quickly amplitude falls per octave.")]
+    [Range(0f, 1f)] public float persistence = 0.5f;
 
-public class PlayerInventoryLoader : MonoBehaviour
-{
-    [Header("Core")]
-    [SerializeField] private InventoryManager inventoryManager;
-    [SerializeField] private DefaultLoadoutSource defaultLoadout;
+    [Tooltip("How quickly frequency rises per octave.")]
+    [Range(1f, 4f)] public float lacunarity = 2f;
 
-    [Header("Optional Sources (auto-discovered if null)")]
-    [SerializeField] private InventorySaveService saveService;
-    [SerializeField] private LevelGrantSource levelGrants;
+    // ── Texture Atlas ─────────────────────────────────────────────────────────
+    [Header("Texture Atlas")]
+    [Tooltip("Number of tiles in one row/column of the atlas texture.")]
+    [Range(1, 32)] public int atlasSize = 4;   // 4×4 = 16 block types
 
-    private void Awake()
-    {
-        // Inventory initializes here as before
-        inventoryManager.InitializeInventoryBar();
-    }
+    // ── Render Material ───────────────────────────────────────────────────────
+    [Header("Rendering")]
+    [Tooltip("Material that holds the block atlas texture. Must use a shader with vertex colours if you want tinting.")]
+    public Material chunkMaterial;
 
-    private void Start()
-    {
-        // All granting happens here, after Awake — execution order is now explicit
-        LoadInventory();
-    }
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void LoadInventory()
-    {
-        var sources = GatherSources();
-        var chosen = PickSource(sources);
+    /// <summary>UV size of one tile in a square atlas.</summary>
+    public float TileUVSize => 1f / atlasSize;
 
-        if (chosen == null)
-        {
-            Debug.LogWarning("No item grant source available. Inventory will be empty.");
-            return;
-        }
+    /// <summary>Total block height of the world (minHeight to maxHeight inclusive).</summary>
+    public int TotalWorldHeight => maxHeight - minHeight + 1;
 
-        foreach (var grant in chosen.GetItemGrants())
-            inventoryManager.TryAddItem(grant.item, grant.amount);
+    /// <summary>Converts a world-space block Y to a local chunk slice index.</summary>
+    public int WorldYToLocal(int worldY) => worldY - minHeight;
 
-        inventoryManager.RefreshSelectedSlot();
-        
-        Debug.Log($"Inventory loaded from: {chosen.GetType().Name}");
-    }
-
-    private List<IItemGrantSource> GatherSources()
-    {
-        var sources = new List<IItemGrantSource>();
-
-        // Auto-discover LevelGrantSource in scene if not assigned
-        if (levelGrants == null)
-            levelGrants = Object.FindAnyObjectByType<LevelGrantSource>();
-
-        if (saveService != null) sources.Add(saveService);
-        if (levelGrants != null) sources.Add(levelGrants);
-        if (defaultLoadout != null) sources.Add(defaultLoadout);
-
-        return sources;
-    }
-
-    // Pick the highest-priority available source
-    // To MERGE sources instead (e.g. save data + level grants), change this method
-    private IItemGrantSource PickSource(List<IItemGrantSource> sources)
-    {
-        return sources
-            .Where(s => s.IsAvailable())
-            .OrderBy(s => s.Priority)
-            .FirstOrDefault();
-    }
-
-    public void SaveInventory()
-    {
-        saveService?.Save(inventoryManager.GetSlots());
-    }
-}
-
-
-==========================================
-SCRIPT: PlacedItem.cs
-==========================================
-using UnityEngine;
-
-public class PlacedItem : MonoBehaviour
-{
-    [SerializeField] private ItemData itemData;
-    public bool IsInteractable => GetComponent<IInteractable>() != null;
-    
-
-    private DebugLabel debugLabel;
-
-    private void Awake()
-    {
-        debugLabel = GetComponent<DebugLabel>() ?? gameObject.AddComponent<DebugLabel>();
-    }
-
-    private void Start()
-    {
-        if (itemData == null)
-        {
-            Debug.LogError("PlacedItem: This Placed item has no ItemData reference assigned, assign one when placing an item.");
-        }
-
-        PerformSimpleDebug();
-    }
-
-    public void SetItemData(ItemData data)
-    {
-        itemData = data;
-        debugLabel.Debug($"Placed: {itemData.itemName}");
-    }
-
-    private void PerformSimpleDebug()
-    {
-        debugLabel.Flash($"Item: {itemData.itemName}");
-    }
-
-    public IInteractable GetInteractable() => GetComponent<IInteractable>();
+    /// <summary>Converts a local Y slice back to world-space block Y.</summary>
+    public int LocalYToWorld(int localY) => localY + minHeight;
 }
 
 

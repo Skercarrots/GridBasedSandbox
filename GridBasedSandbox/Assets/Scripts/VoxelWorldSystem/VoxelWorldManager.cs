@@ -32,6 +32,7 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     // ── Inspector ─────────────────────────────────────────────────────────────
     [Header("Settings")]
     [SerializeField] private VoxelWorldSettings settings;
+    [SerializeField] private WorldGenerator worldGenerator;
 
     [Header("Scene references")]
     [SerializeField] private Transform playerTransform;
@@ -112,8 +113,8 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         // Get or generate chunk data
         if (!_chunkDataCache.TryGetValue(coord, out VoxelChunkData data))
         {
-            data = new VoxelChunkData(coord, settings.chunkWidth, settings.chunkHeight);
-            VoxelTerrainGenerator.Generate(data, settings, _seed);
+            data = new VoxelChunkData(coord, settings.chunkWidth, settings.TotalWorldHeight);
+            worldGenerator.Generate(data, settings, _seed);
             _chunkDataCache[coord] = data;
         }
 
@@ -282,6 +283,8 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     {
         if (settings == null)
             Debug.LogError("[VoxelWorldManager] Missing VoxelWorldSettings!", this);
+        if (worldGenerator == null)
+            Debug.LogError("[VoxelWorldManager] Missing WorldGenerator! Assign an OverworldGenerator asset (or other WorldGenerator) in the Inspector.", this);
         if (playerTransform == null)
             Debug.LogError("[VoxelWorldManager] Missing player Transform!", this);
         if (chunkPrefab == null)
