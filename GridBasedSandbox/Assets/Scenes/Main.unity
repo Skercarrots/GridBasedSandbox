@@ -318,7 +318,7 @@ MonoBehaviour:
   m_BlockingObjects: 0
   m_BlockingMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 3063
 --- !u!114 &315813719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1027,7 +1027,7 @@ MonoBehaviour:
   gridSystem: {fileID: 767775399}
   inventoryManager: {fileID: 1394006416}
   objectPlacer: {fileID: 1215361547}
-  voxelBlockPlacer: {fileID: 0}
+  voxelBlockPlacer: {fileID: 1692839092}
 --- !u!4 &1517475280
 Transform:
   m_ObjectHideFlags: 0
@@ -1116,7 +1116,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &2046149865
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1134,7 +1134,7 @@ MonoBehaviour:
   maxInteractDistance: 5
   interactableLayer:
     serializedVersion: 2
-    m_Bits: 129
+    m_Bits: 2177
 --- !u!4 &2046149866
 Transform:
   m_ObjectHideFlags: 0

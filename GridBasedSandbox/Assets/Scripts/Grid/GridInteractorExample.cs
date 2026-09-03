@@ -21,7 +21,7 @@ public class GridInteractor : MonoBehaviour
         // Verifica se o botão esquerdo do mouse foi clicado
         if (Input.GetMouseButtonDown(0))
         {
-            //PerformGridRaycast();
+            PerformGridRaycast();
         }
     }
 
