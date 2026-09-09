@@ -43,6 +43,15 @@ public class OverworldGenerator : WorldGenerator
     [Tooltip("Blocks of solid ground below the surface that caves never carve through.")]
     [SerializeField] private int caveMinDepthBelowSurface = 4;
 
+    public override void Prepare()
+    {
+        // Bake every biome's AnimationCurve into a thread-safe LUT before this
+        // generator's Generate() ever runs on a background thread — see the
+        // threading notes on WorldGenerator.Prepare() and BiomeDefinition.
+        if (biomeRegistry != null)
+            biomeRegistry.Initialize();
+    }
+
     public override void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed)
     {
         int worldOriginX = data.WorldOriginX;
@@ -65,7 +74,7 @@ public class OverworldGenerator : WorldGenerator
 
             // Shape height from continentalness via this biome's curve, then let
             // erosion pull it toward the midpoint — flattens plains, barely touches mountains.
-            float shaped    = biome.heightCurve.Evaluate(cont) * biome.heightMultiplier;
+            float shaped    = biome.EvaluateHeightCurve(cont) * biome.heightMultiplier;
             float flattened = Mathf.Lerp(shaped, 0.5f, erosionValue * 0.5f);
             int   surfaceY  = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(minY, maxY, flattened)), minY, maxY);
 

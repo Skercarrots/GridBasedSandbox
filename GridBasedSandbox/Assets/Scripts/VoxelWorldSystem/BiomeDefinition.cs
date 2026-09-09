@@ -54,4 +54,44 @@ public class BiomeDefinition : ScriptableObject
         float dh = Mathf.Max(minHumidity - humidity, 0f, humidity - maxHumidity);
         return dt * dt + dh * dh;
     }
+
+    // ── Baked curve (thread-safe sampling) ────────────────────────────────────
+    // AnimationCurve.Evaluate() isn't officially safe to call off the main
+    // thread, but OverworldGenerator now runs Generate() on background threads.
+    // BakeHeightCurve() samples the curve once, on the main thread, into a plain
+    // float[] LUT — BiomeRegistry.Initialize() calls this for every biome, which
+    // in turn is called from OverworldGenerator.Prepare() before any background
+    // generation is dispatched. EvaluateHeightCurve() below is what Generate()
+    // actually calls — pure array lookup + lerp, safe from any thread.
+    private const int CURVE_BAKE_SAMPLES = 128;
+    private float[] _bakedHeightCurve;
+
+    /// <summary>Samples heightCurve into a LUT. MAIN THREAD ONLY — call before any
+    /// background generation starts, never from inside Generate() itself.</summary>
+    public void BakeHeightCurve()
+    {
+        _bakedHeightCurve = new float[CURVE_BAKE_SAMPLES];
+        for (int i = 0; i < CURVE_BAKE_SAMPLES; i++)
+        {
+            float t = i / (float)(CURVE_BAKE_SAMPLES - 1);
+            _bakedHeightCurve[i] = heightCurve.Evaluate(t);
+        }
+    }
+
+    /// <summary>Thread-safe stand-in for heightCurve.Evaluate(t). Uses the baked LUT
+    /// if BakeHeightCurve() has run; otherwise falls back to evaluating the curve
+    /// directly (only safe if called from the main thread — e.g. editor tooling
+    /// that generates a chunk without going through VoxelWorldManager).</summary>
+    public float EvaluateHeightCurve(float t)
+    {
+        if (_bakedHeightCurve == null)
+            return heightCurve.Evaluate(t);
+
+        t = Mathf.Clamp01(t);
+        float f  = t * (CURVE_BAKE_SAMPLES - 1);
+        int i0   = Mathf.FloorToInt(f);
+        int i1   = Mathf.Min(i0 + 1, CURVE_BAKE_SAMPLES - 1);
+        float fr = f - i0;
+        return Mathf.Lerp(_bakedHeightCurve[i0], _bakedHeightCurve[i1], fr);
+    }
 }

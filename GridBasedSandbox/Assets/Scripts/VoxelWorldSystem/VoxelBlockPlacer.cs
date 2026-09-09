@@ -48,12 +48,22 @@ public class VoxelBlockPlacer : MonoBehaviour
 
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
-    private void Start()
-    {
-        if (playerCamera == null) playerCamera = Camera.main;
-    }
+    // NOTE: we intentionally do NOT resolve Camera.main here. Start() runs before
+    // WorldBootstrapper's coroutine finishes, so Camera.main at that point is still
+    // the loading camera, not the player's. SetPlayerCamera() below is the correct
+    // injection path. The lazy fallback inside Raycast() covers standalone use
+    // (e.g. a test scene where there's no WorldBootstrapper at all).
 
-    // ── Public API (call from GameInputManager) ────────────────────────────────
+    // ── Public API (call from GameInputManager or WorldBootstrapper) ──────────
+
+    /// <summary>
+    /// Injects the player's camera. Called by WorldBootstrapper immediately after
+    /// the player prefab is instantiated, so the camera reference is guaranteed
+    /// correct by the time any input arrives. Also callable from editor scripts
+    /// or a custom spawn system — anything that spawns the player instead of
+    /// WorldBootstrapper.
+    /// </summary>
+    public void SetPlayerCamera(Camera cam) => playerCamera = cam;
 
     /// <summary>
     /// Places a block in the cell ADJACENT to the hit face.
@@ -91,6 +101,15 @@ public class VoxelBlockPlacer : MonoBehaviour
 
     private bool Raycast(out RaycastHit hit)
     {
+        // Lazy fallback: resolves Camera.main on first use. By the time the player
+        // can actually click anything the loading camera is already disabled, so
+        // Camera.main will correctly return the player's camera here. This path
+        // only triggers if SetPlayerCamera() was never called (e.g. a test scene
+        // with no WorldBootstrapper).
+        if (playerCamera == null) playerCamera = Camera.main;
+
+        if (playerCamera == null) { hit = default; return false; }
+
         Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
         return Physics.Raycast(ray, out hit, maxReach, chunkLayer);
     }

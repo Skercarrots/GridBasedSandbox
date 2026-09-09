@@ -19,6 +19,17 @@ public class BiomeRegistry : ScriptableObject
              "trigger once your biomes collectively cover the full 0..1 x 0..1 range.")]
     [SerializeField] private BiomeDefinition fallbackBiome;
 
+    /// <summary>Bakes every biome's height curve into its thread-safe LUT. MAIN THREAD
+    /// ONLY — call once, before any background chunk generation begins. Called from
+    /// OverworldGenerator.Prepare().</summary>
+    public void Initialize()
+    {
+        foreach (var biome in biomes)
+            biome?.BakeHeightCurve();
+
+        fallbackBiome?.BakeHeightCurve();
+    }
+
     /// <summary>Returns the biome whose range contains (temperature, humidity), or the closest one.</summary>
     public BiomeDefinition GetBiome(float temperature, float humidity)
     {

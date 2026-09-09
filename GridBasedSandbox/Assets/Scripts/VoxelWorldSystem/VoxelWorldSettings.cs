@@ -64,6 +64,13 @@ public class VoxelWorldSettings : ScriptableObject
     [Tooltip("Master seed. 0 = random at runtime.")]
     public int seed = 0;
 
+    [Tooltip("Max chunks generated in parallel on background threads. 0 = auto " +
+             "(processor count − 1). Generate() itself no longer touches the main " +
+             "thread at all; this only caps worker-thread count. Mesh building is " +
+             "still budgeted separately by maxChunkBuildsPerFrame above, since it " +
+             "must run on the main thread.")]
+    public int maxConcurrentChunkGenerations = 0;
+
     // ── Texture Atlas ─────────────────────────────────────────────────────────
     [Header("Texture Atlas")]
     [Tooltip("Number of tiles in one row/column of the atlas texture.")]

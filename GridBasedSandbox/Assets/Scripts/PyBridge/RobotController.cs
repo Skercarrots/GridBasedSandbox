@@ -38,7 +38,7 @@ public class RobotController : MonoBehaviour, IScriptableDevice
         Vector3 start  = transform.position;
         Vector3 target = start + direction;
         float elapsed  = 0f;
-        float duration = 0.4f;
+        float duration = 0.4f; //0.4
 
         while (elapsed < duration)
         {
@@ -57,7 +57,7 @@ public class RobotController : MonoBehaviour, IScriptableDevice
         Quaternion start  = transform.rotation;
         Quaternion target = start * Quaternion.Euler(0, degrees, 0);
         float elapsed  = 0f;
-        float duration = 0.3f;
+        float duration = 0.3f; //0.3
 
         while (elapsed < duration)
         {

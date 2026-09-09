@@ -17,8 +17,8 @@ MonoBehaviour:
   maxTemperature: 1
   minHumidity: 0
   maxHumidity: 1
-  surfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
-  subsurfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
+  surfaceBlock: {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
+  subsurfaceBlock: {fileID: 11400000, guid: ee2330afc47c3334fa802db293b98726, type: 2}
   subsurfaceDepth: 3
   heightCurve:
     serializedVersion: 2
