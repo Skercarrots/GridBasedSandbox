@@ -1,6 +1,10 @@
 using UnityEngine;
 
-public class GameInpurManager : MonoBehaviour
+// CHANGED: reads GameState.IsIDEOpen at the top of Update() and early-returns,
+// which suppresses hotbar slot selection, block placement, entity placement,
+// and interaction clicks while the IDE panel is open.
+
+public class GameInputManager : MonoBehaviour
 {
     [SerializeField] private GridSystem gridSystem;
     [SerializeField] private InventoryManager inventoryManager;
@@ -9,8 +13,10 @@ public class GameInpurManager : MonoBehaviour
 
     void Update()
     {
-        InventoryInput();
+        // ── CHANGED: no gameplay input while IDE is open ─────────────────────
+        if (GameState.IsIDEOpen) return;
 
+        InventoryInput();
         PlaceObjectsInput();
     }
 
@@ -19,46 +25,42 @@ public class GameInpurManager : MonoBehaviour
         for (int i = 1; i <= 9; i++)
         {
             if (Input.GetKeyDown(KeyCode.Alpha0 + i))
-            {
                 inventoryManager.ChangeCurrentSelectedSlot(i - 1);
-            }
         }
 
         if (Input.GetKeyDown(KeyCode.Alpha0))
-        {
             inventoryManager.ChangeCurrentSelectedSlot(9);
-        }
     }
 
     private void PlaceObjectsInput()
     {
         if (Input.GetMouseButtonDown(0))
         {
-            //objectPlacer.RemoveObjectFromCell();
             voxelBlockPlacer.RemoveBlock();
         }
         else if (Input.GetMouseButtonDown(1))
         {
-            // Try interaction first, fall back to removal
             if (TryInteract())
             {
                 Debug.Log("Interacted with object under cursor.");
                 return;
             }
-            // Only place if hands are NOT empty — check inventory
-            if (inventoryManager.GetSelectedItem() != null)
-            {
-                voxelBlockPlacer.PlaceBlock();
-            }
-                //objectPlacer.PlaceObjectInCell();
-                
+
+            ItemData selected = inventoryManager.GetSelectedItem();
+            if (selected == null) return;
+            if (!selected.isPlaceable) return;
+
+            if (selected.isEntity)
+                objectPlacer.PlaceObjectInCell();
+            else
+                voxelBlockPlacer.PlaceBlock(selected.voxelBlockId);
         }
     }
 
     private bool TryInteract()
     {
         if (!HasEmptyHands()) return false;
-        
+
         PlacedItem item = objectPlacer.GetPlacedItemUnderCursor();
         if (item == null) return false;
 
@@ -68,7 +70,6 @@ public class GameInpurManager : MonoBehaviour
         interactable.Interact();
         return true;
     }
-
 
     private bool HasEmptyHands() => inventoryManager.GetSelectedItem() == null;
 }

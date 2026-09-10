@@ -38,6 +38,13 @@ using UnityEngine;
 
 public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 {
+    // Convenience singleton — lets device components (e.g. VoxelBodySensor)
+    // query the world without every prefab needing a manual Inspector
+    // reference. Assumes a single VoxelWorldManager in the scene, which
+    // matches how the rest of this system (chunk streaming, spawn point)
+    // already assumes one world.
+    public static VoxelWorldManager Instance { get; private set; }
+
     // ── Inspector ─────────────────────────────────────────────────────────────
     [Header("Settings")]
     [SerializeField] private VoxelWorldSettings settings;
@@ -86,6 +93,7 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 
     private void Awake()
     {
+        Instance = this;
         EnsureInitialized();
     }
 
@@ -302,6 +310,15 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 
         return 0; // unknown chunk → treat as air
     }
+
+    /// <summary>
+    /// True if the block at world-space block position (wx, wy, wz) is solid.
+    /// Convenience wrapper around GetBlockAt() + the block registry, meant for
+    /// device sensors (see VoxelBodySensor) that just need a yes/no answer.
+    /// Unloaded chunks read as air, same convention as GetBlockAt().
+    /// </summary>
+    public bool IsSolidBlock(int wx, int wy, int wz)
+        => settings.blockRegistry.IsSolid(GetBlockAt(wx, wy, wz));
 
     // ── Public block editing API ──────────────────────────────────────────────
 

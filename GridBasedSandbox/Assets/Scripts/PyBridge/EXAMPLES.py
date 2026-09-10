@@ -85,3 +85,30 @@ while True:
 #   while True:
 #       robot.broadcast("start", "")    # camera triggers all robots
 #       import time; time.sleep(5)
+
+
+# ── Example 9: Speed control ───────────────────────────────────────────────
+robot.set_speed(0.5)       # slow — nice for watching it think
+robot.move(1)
+robot.set_speed(6.0)       # fast — nice once the logic is trusted
+robot.move(1)
+print(f"moving at {robot.get_speed()} units/sec")
+
+
+# ── Example 10: Simple obstacle-aware wandering (a taste of pathfinding) ───
+# Put this on a ScriptRunner with scriptTimeout set to 0 (unlimited) in the
+# Inspector — this loop is meant to run forever, not for the 10s IDE default.
+import random
+
+while True:
+    s = robot.surroundings()   # one call, all six directions
+
+    if s.below and not s.ahead:
+        # solid ground ahead and no wall in the way — go
+        robot.move(1)
+    else:
+        # wall ahead, or a drop below — turn and try another direction
+        if random.random() < 0.5:
+            robot.turn_left()
+        else:
+            robot.turn_right()

@@ -1,6 +1,17 @@
 // InGameIDEController.cs
 // Controlador da interface de programação in-game.
 // Gerencia a abertura da janela, leitura do código do jogador e limpeza de bugs de formatação.
+//
+// CHANGED:
+//   • ToggleIDE() now syncs GameState.IsIDEOpen and re-locks the cursor when
+//     the panel closes, so the player snaps back into first-person control
+//     without having to click.
+//   • Update() now guards the backtick/quote toggle against the input field
+//     being focused — previously typing a ' in your code would close the IDE.
+//   • Update() handles Escape to close the IDE while it's open, since
+//     PlayerController.HandleCursorToggle() is suppressed during IDE use.
+//   • Start() resets GameState.IsIDEOpen = false so a scene reload can never
+//     inherit a stale "open" state from a previous session.
 
 using UnityEngine;
 using TMPro;
@@ -23,46 +34,47 @@ public class InGameIDEController : MonoBehaviour
     public UnityEngine.UI.Button stopButton;
     public UnityEngine.UI.Button closeButton;
 
-    // Documentação: O método Start é chamado no primeiro frame. 
-    // Além de configurar os botões, agora ele assina o evento de mudança de texto para limpar bugs de colagem.
     private void Start()
     {
-        if (runButton != null) runButton.onClick.AddListener(RunCode);
+        if (runButton  != null) runButton.onClick.AddListener(RunCode);
         if (stopButton != null) stopButton.onClick.AddListener(StopCode);
         if (closeButton != null) closeButton.onClick.AddListener(ToggleIDE);
 
-        // CONFIGURAÇÃO NOVA: Filtro de Correção de Quebra de Linha
         if (codeInputField != null)
         {
-            // Forçamos via código que ele aceite múltiplas linhas, para evitar configurações erradas no Inspector
             codeInputField.lineType = TMP_InputField.LineType.MultiLineNewline;
-            
-            // Assinamos o nosso método SanitizeText para rodar SEMPRE que o texto for alterado (digitado ou colado)
             codeInputField.onValueChanged.AddListener(SanitizeText);
         }
 
         if (idePanel != null)
-        {
             idePanel.SetActive(false);
-        }
+
+        // ── CHANGED: reset in case of scene reload ──────────────────────────
+        GameState.IsIDEOpen = false;
     }
 
-    // Documentação: Verifica se a tecla de aspas (') ou crase (`) foi pressionada para abrir/fechar a IDE.
     private void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Quote) || Input.GetKeyDown(KeyCode.BackQuote))
-        {
+        // ── CHANGED: don't close the IDE if the player is typing in it ──────
+        // Previously `'` in code would immediately close the panel.
+        bool codeFieldFocused = codeInputField != null && codeInputField.isFocused;
+
+        if (!codeFieldFocused && (Input.GetKeyDown(KeyCode.Quote) || Input.GetKeyDown(KeyCode.BackQuote)))
             ToggleIDE();
-        }
+
+        // ── CHANGED: Escape closes the IDE ──────────────────────────────────
+        // PlayerController.HandleCursorToggle() is suppressed while the IDE is
+        // open (see GameState.IsIDEOpen guard in PlayerController.Update()), so
+        // we take over Escape here to give it a natural "close the menu" feel.
+        if (GameState.IsIDEOpen && Input.GetKeyDown(KeyCode.Escape))
+            ToggleIDE();
     }
 
-    // Documentação: Extrai o texto digitado na UI e envia para o ScriptRunner compilar e executar.
     public void RunCode()
     {
         if (runner != null && codeInputField != null)
         {
-            string code = codeInputField.text;
-            runner.RunScript(code);
+            runner.RunScript(codeInputField.text);
             Debug.Log("Código enviado para o ScriptRunner!");
         }
         else
@@ -71,7 +83,6 @@ public class InGameIDEController : MonoBehaviour
         }
     }
 
-    // Documentação: Interrompe imediatamente o script que está rodando no momento.
     public void StopCode()
     {
         if (runner != null)
@@ -81,51 +92,60 @@ public class InGameIDEController : MonoBehaviour
         }
     }
 
-    // Documentação: Alterna a visibilidade da janela da IDE e ajusta o cursor do mouse.
+    // Opens the IDE already pointing at a specific ScriptRunner.
+    // Called by RobotInteraction — clicking different robots opens the
+    // "right" editor for that robot rather than staying on whatever runner
+    // was wired in the Inspector.
+    public void OpenFor(ScriptRunner targetRunner)
+    {
+        runner = targetRunner;
+
+        if (idePanel != null && !idePanel.activeSelf)
+            ToggleIDE();
+        // If already open (player clicked a second robot while IDE was open),
+        // we just swapped runners above — no second toggle needed.
+        // GameState.IsIDEOpen stays true. ✓
+    }
+
+    // ── CHANGED: syncs GameState and cursor on both open and close ──────────
     public void ToggleIDE()
     {
         if (idePanel == null) return;
 
-        bool isCurrentlyActive = idePanel.activeSelf;
-        bool willBeActive = !isCurrentlyActive;
-        
+        bool willBeActive = !idePanel.activeSelf;
+
         idePanel.SetActive(willBeActive);
+        GameState.IsIDEOpen = willBeActive;
 
         if (willBeActive)
         {
+            // Opening: show the cursor so the player can type and click buttons.
             Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
+            Cursor.visible   = true;
+        }
+        else
+        {
+            // Closing: re-lock the cursor so the player is back in first-person
+            // immediately. Without this they'd need to click to re-lock, which
+            // was jarring and easy to accidentally place a block at.
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible   = false;
         }
     }
 
-    // ── Novo Método: Sanitização de Texto ─────────────────────────────────
+    // ── Sanitização de Texto ──────────────────────────────────────────────────
 
-    // Documentação: Recebe a string atualizada do InputField e remove o caractere '\r'.
-    // Isso previne o bug onde o TextMeshPro para de registrar a tecla Enter após colarmos código.
     public void SanitizeText(string currentText)
     {
-        // Se encontrarmos o caractere invisível problemático (\r)...
         if (currentText.Contains("\r"))
         {
-            // 1. Salvamos a posição atual do "pauzinho que pisca" (cursor/caret) 
-            // para que ele não pule para o final do texto irritando o jogador.
             int caretPos = codeInputField.caretPosition;
 
-            // 2. Removemos todos os '\r' da string.
             string cleanedText = currentText.Replace("\r", "");
 
-            // 3. Removemos temporariamente este "ouvinte" (listener)
-            // Por que? Porque se mudarmos o texto na linha abaixo, este método seria chamado de novo,
-            // criando um loop infinito travando o jogo.
             codeInputField.onValueChanged.RemoveListener(SanitizeText);
-            
-            // 4. Aplicamos o texto limpo de volta à interface
             codeInputField.text = cleanedText;
-            
-            // 5. Devolvemos o cursor para a posição em que o jogador estava
             codeInputField.caretPosition = caretPos;
-            
-            // 6. Religamos o "ouvinte" para as próximas vezes que o jogador digitar ou colar.
             codeInputField.onValueChanged.AddListener(SanitizeText);
         }
     }

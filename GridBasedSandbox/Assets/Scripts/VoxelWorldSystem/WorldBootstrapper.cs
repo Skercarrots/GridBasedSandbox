@@ -33,10 +33,11 @@ public class WorldBootstrapper : MonoBehaviour
              "prefab is spawned and its own camera takes over.")]
     [SerializeField] private Camera loadingCamera;
 
-    [Tooltip("Optional — assign if VoxelBlockPlacer lives in the scene rather than on " +
-             "the player prefab. The bootstrapper will inject the player's camera into " +
-             "it automatically so you don't have to wire the Inspector field by hand.")]
-    [SerializeField] private VoxelBlockPlacer blockPlacer;
+    [Tooltip("The scene's WorldRaycaster (used by CellVisualizer, SimpleObjectPlacer, " +
+             "VoxelBlockPlacer, and interaction). It needs the real player camera, " +
+             "which doesn't exist until this coroutine spawns it — don't assign a " +
+             "camera to it in the Inspector, this script wires it up at runtime.")]
+    [SerializeField] private WorldRaycaster worldRaycaster;
 
     [Header("Spawn")]
     [Tooltip("World block X/Z the player spawns near. (0,0) = world center.")]
@@ -84,10 +85,14 @@ public class WorldBootstrapper : MonoBehaviour
         // Grab the camera that lives on (or inside) the player prefab.
         Camera playerCam = player.GetComponentInChildren<Camera>();
 
-        // Wire it into VoxelBlockPlacer — must happen before the loading camera
-        // goes dark so raycasts are never left pointing at a dead camera reference.
-        if (blockPlacer != null && playerCam != null)
-            blockPlacer.SetPlayerCamera(playerCam);
+        // Hand off the real player camera to WorldRaycaster — every
+        // interaction/placement script (CellVisualizer, SimpleObjectPlacer,
+        // VoxelBlockPlacer) now reads from its shared per-frame hit instead
+        // of resolving Camera.main or holding its own camera reference.
+        // Must happen before the loading camera goes dark so raycasts are
+        // never left pointing at a dead camera reference.
+        if (worldRaycaster != null && playerCam != null)
+            worldRaycaster.SetPlayerCamera(playerCam);
 
         // The player camera is now live — safe to disable the loading camera.
         // Doing this before Hide() means there's never a frame with no active camera.

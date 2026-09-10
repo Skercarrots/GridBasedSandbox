@@ -5,14 +5,39 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
 
 public static class DeviceRegistry
 {
     private static readonly Dictionary<string, IScriptableDevice> _devices = new();
 
     // Called automatically by each device's OnEnable
+    //
+    // Handles a real problem that only shows up once devices start being
+    // spawned at runtime (e.g. a robot placed from a "spawn egg" item):
+    // every clone of the same prefab shares Unity's default "(Clone)" name,
+    // and DeviceName is just gameObject.name — so a second spawned robot
+    // would silently overwrite the first one's entry here, and
+    // robot.send("Robot_A(Clone)", ...) would only ever reach whichever one
+    // registered last. If the name's taken, rename the GameObject itself
+    // rather than silently colliding — DeviceName reads gameObject.name
+    // live, so this keeps working the moment it's set.
     public static void Register(IScriptableDevice device)
-        => _devices[device.DeviceName] = device;
+    {
+        string name = device.DeviceName;
+
+        if (_devices.ContainsKey(name) && device is Component c)
+        {
+            int suffix = 2;
+            string baseName = name;
+            while (_devices.ContainsKey($"{baseName}_{suffix}")) suffix++;
+
+            c.gameObject.name = $"{baseName}_{suffix}";
+            name = c.gameObject.name;
+        }
+
+        _devices[name] = device;
+    }
 
     // Called automatically by each device's OnDisable
     public static void Unregister(string name)

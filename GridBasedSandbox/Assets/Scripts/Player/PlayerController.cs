@@ -8,6 +8,11 @@
 //   - CapsuleCollider (configured automatically in Awake, or set manually)
 //   - A zero-friction PhysicsMaterial on the CapsuleCollider (see setup guide)
 //   - A child GameObject with the Camera at eye level (y ≈ 1.6)
+//
+// CHANGED: Reads GameState.IsIDEOpen to suppress movement/jump when the
+// in-game IDE is open. Mouse-look is already suppressed by the existing
+// "return if cursor not locked" guard in HandleMouseLook() — the IDE's
+// ToggleIDE() unlocks the cursor on open, so that path is already covered.
 
 using UnityEngine;
 
@@ -68,9 +73,10 @@ public class PlayerController : MonoBehaviour
     private Rigidbody       _rb;
     private CapsuleCollider _col;
     private float           _pitch;
-    private float           _yaw;        // free-running look yaw, driven purely by Update() — never touches the Rigidbody
+    private float           _yaw;
     private bool            _isGrounded;
     private bool            _jumpQueued;
+    private float           _takeoffSpeed;
 
     // ── Setup ──────────────────────────────────────────────────────────────
 
@@ -79,18 +85,16 @@ public class PlayerController : MonoBehaviour
         _rb  = GetComponent<Rigidbody>();
         _col = GetComponent<CapsuleCollider>();
 
-        // These four settings are the key to a jitter-free, stable voxel controller
-        _rb.freezeRotation         = true;                              // physics won't tip the player over
-        _rb.useGravity             = false;                             // we apply our own gravity
-        _rb.interpolation          = RigidbodyInterpolation.Interpolate;// smooths camera between physics steps — eliminates jitter
-        _rb.collisionDetectionMode = CollisionDetectionMode.Continuous; // prevents tunneling through thin blocks at high speed
+        _rb.freezeRotation         = true;
+        _rb.useGravity             = false;
+        _rb.interpolation          = RigidbodyInterpolation.Interpolate;
+        _rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
-        // Capsule sized to fit through 1-wide × 2-tall voxel gaps
-        // Diameter = 0.6 (radius 0.3) fits inside a 1-unit-wide gap with clearance
-        // Height  = 1.8 fits under a 2-unit ceiling with clearance
         _col.height = 1.8f;
         _col.radius = 0.3f;
-        _col.center = new Vector3(0f, _col.height * 0.5f, 0f); //capsule sits on top of pivot (feet at ground)
+        _col.center = new Vector3(0f, _col.height * 0.5f, 0f);
+
+        _takeoffSpeed = walkSpeed;
 
         LockCursor();
     }
@@ -99,14 +103,15 @@ public class PlayerController : MonoBehaviour
 
     private void Update()
     {
-        // Mouse look runs entirely here, at full render framerate — it never
-        // touches the Rigidbody, so it's immune to physics-tick jitter.
+        // Mouse-look: already a no-op when the cursor is unlocked, so when the
+        // IDE is open (which unlocks the cursor) this automatically suppresses.
         HandleMouseLook();
 
-        // Ground check in Update — checks before FixedUpdate so jump input is ready
         HandleGroundCheck();
 
-        // Buffer jump input so it isn't dropped between Update and FixedUpdate
+        // ── CHANGED: suppress gameplay input while IDE is open ──────────────
+        if (GameState.IsIDEOpen) return;
+
         if (Input.GetButtonDown("Jump") && _isGrounded)
             _jumpQueued = true;
 
@@ -115,11 +120,6 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        // Note: the Rigidbody's rotation is never touched, anywhere, by anything.
-        // freezeRotation keeps it locked, and we no longer call MoveRotation on it.
-        // A capsule collider is rotationally symmetric around Y, so this costs us
-        // nothing physically, and it's what lets camera look be 100% Update()-driven
-        // (see HandleMouseLook) instead of bottlenecked by the fixed physics tick.
         HandleMovement();
         HandleGravity();
     }
@@ -130,18 +130,13 @@ public class PlayerController : MonoBehaviour
     {
         if (Cursor.lockState != CursorLockMode.Locked) return;
 
-        // GetAxisRaw = raw pixel delta, no Unity smoothing — matches Minecraft's direct feel
         float mouseX = Input.GetAxisRaw("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxisRaw("Mouse Y") * mouseSensitivity;
 
-        // Accumulate yaw as a free-running value — never applied to the Rigidbody,
-        // so it's not bottlenecked by the fixed physics tick or fought by interpolation.
         _yaw += mouseX;
 
         _pitch = Mathf.Clamp(_pitch - mouseY, -maxPitch, maxPitch);
 
-        // Set world rotation directly (not localRotation) so this is correct
-        // regardless of the parent Player's rotation, which now stays at identity.
         cameraTransform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
     }
 
@@ -149,9 +144,6 @@ public class PlayerController : MonoBehaviour
 
     private void HandleGroundCheck()
     {
-        // Place a sphere at the very bottom of the capsule, pushed down slightly.
-        // CheckSphere is more reliable than SphereCast on flat voxel faces
-        // because it has no direction bias.
         Vector3 checkPos = transform.position + _col.center
             + Vector3.down * (_col.height * 0.5f - _col.radius + groundCheckOffset);
 
@@ -159,7 +151,7 @@ public class PlayerController : MonoBehaviour
             checkPos,
             groundCheckRadius,
             groundLayers,
-            QueryTriggerInteraction.Ignore // never detect triggers as ground
+            QueryTriggerInteraction.Ignore
         );
     }
 
@@ -167,35 +159,38 @@ public class PlayerController : MonoBehaviour
 
     private void HandleMovement()
     {
-        // GetAxisRaw = instant response, no input smoothing
+        // ── CHANGED: drain horizontal velocity and bail when IDE is open ────
+        // We drain rather than just returning so the player doesn't keep
+        // sliding in the direction they were walking before opening the IDE.
+        if (GameState.IsIDEOpen)
+        {
+            _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
+            _jumpQueued = false;
+            return;
+        }
+
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
-        bool sprinting = Input.GetKey(KeyCode.LeftShift) && v > 0f; // sprint forward only
+        bool sprinting = Input.GetKey(KeyCode.LeftShift) && v > 0f;
         float speed = sprinting ? sprintSpeed : walkSpeed;
 
-        // Build move direction relative to where the player is looking (yaw only —
-        // pitch shouldn't tilt movement). The Player transform itself no longer
-        // rotates, so we derive the basis from _yaw directly rather than
-        // transform.right/transform.forward.
         Quaternion yawRotation = Quaternion.Euler(0f, _yaw, 0f);
         Vector3 forward = yawRotation * Vector3.forward;
         Vector3 right   = yawRotation * Vector3.right;
         Vector3 inputDir = right * h + forward * v;
-        if (inputDir.sqrMagnitude > 1f) inputDir.Normalize(); // prevent diagonal speed boost
+        if (inputDir.sqrMagnitude > 1f) inputDir.Normalize();
         Vector3 targetVelocity = inputDir * speed;
 
         if (_isGrounded)
         {
-            // Set horizontal velocity directly — instant, snappy, Minecraft-like
-            // Y velocity is preserved so gravity and jumps still work
             _rb.linearVelocity = new Vector3(
                 targetVelocity.x,
                 _rb.linearVelocity.y,
                 targetVelocity.z
             );
 
-            // Apply jump using the physics formula: v = sqrt(2 * |g| * h)
-            // This guarantees reaching exactly jumpHeight regardless of gravity value
+            _takeoffSpeed = speed;
+
             if (_jumpQueued)
             {
                 float jumpVelocity = Mathf.Sqrt(2f * Mathf.Abs(gravity) * jumpHeight);
@@ -204,21 +199,18 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            // In air: minimal control — just a gentle nudge toward the target
-            // Prevents full mid-air redirection (more realistic, less exploitable)
             Vector3 currentH = new Vector3(_rb.linearVelocity.x, 0f, _rb.linearVelocity.z);
             Vector3 diff = targetVelocity - currentH;
             _rb.AddForce(new Vector3(diff.x, 0f, diff.z) * 0.08f, ForceMode.VelocityChange);
 
-            // Cap horizontal speed so the player can't exceed walk speed in air
-            if (currentH.magnitude > walkSpeed)
+            if (currentH.magnitude > _takeoffSpeed)
             {
-                currentH = currentH.normalized * walkSpeed;
+                currentH = currentH.normalized * _takeoffSpeed;
                 _rb.linearVelocity = new Vector3(currentH.x, _rb.linearVelocity.y, currentH.z);
             }
         }
 
-        _jumpQueued = false; // always clear — prevents mid-air jump if grounded status changed
+        _jumpQueued = false;
     }
 
     // ── Custom gravity ─────────────────────────────────────────────────────
@@ -227,26 +219,16 @@ public class PlayerController : MonoBehaviour
     {
         if (_isGrounded && _rb.linearVelocity.y <= 0f)
         {
-            // While grounded, pin downward velocity to a small constant.
-            // This is the fix for "floating between pillars" — without it,
-            // the player's downward velocity can become 0 from pillar contacts,
-            // causing them to levitate. -2 keeps the player pressed to the ground.
             _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, -2f, _rb.linearVelocity.z);
         }
         else
         {
-            // Falling gets extra gravity on top of the base value — this asymmetry
-            // (heavier down than up) is the main thing that reads as "weight."
-            // Rising is untouched, so jumpHeight is still hit exactly at the apex;
-            // only the descent afterward gets noticeably snappier/heavier.
             float appliedGravity = gravity;
             if (_rb.linearVelocity.y < 0f)
                 appliedGravity *= fallGravityMultiplier;
 
             _rb.AddForce(Vector3.up * appliedGravity, ForceMode.Acceleration);
 
-            // Clamp to terminal velocity so long drops don't keep accelerating
-            // forever — Minecraft's fall speed caps out too.
             if (_rb.linearVelocity.y < -maxFallSpeed)
                 _rb.linearVelocity = new Vector3(_rb.linearVelocity.x, -maxFallSpeed, _rb.linearVelocity.z);
         }
@@ -256,6 +238,9 @@ public class PlayerController : MonoBehaviour
 
     private void HandleCursorToggle()
     {
+        // NOTE: Escape-to-unlock is intentionally NOT handled here while the IDE
+        // is open — InGameIDEController.Update() takes over Escape in that state
+        // and uses it to close the IDE instead.
         if (Input.GetKeyDown(KeyCode.Escape))
             UnlockCursor();
 
@@ -263,13 +248,13 @@ public class PlayerController : MonoBehaviour
             LockCursor();
     }
 
-    private void LockCursor()
+    public void LockCursor()
     {
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible   = false;
     }
 
-    private void UnlockCursor()
+    public void UnlockCursor()
     {
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible   = true;
@@ -277,8 +262,6 @@ public class PlayerController : MonoBehaviour
 
     // ── Debug ──────────────────────────────────────────────────────────────
 
-    // Draws the ground check sphere in the Scene view so you can see exactly
-    // where and how big the ground detection is. Only visible in the editor.
     private void OnDrawGizmosSelected()
     {
         if (_col == null) _col = GetComponent<CapsuleCollider>();

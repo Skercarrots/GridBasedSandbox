@@ -10,13 +10,13 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 95d9f70848a31404f81c518f775d722b, type: 3}
-  m_Name: Button
+  m_Name: Robot
   m_EditorClassIdentifier: Assembly-CSharp::ItemData
-  id: 2
-  itemName: Button
-  icon: {fileID: 820854672, guid: b75d215501f9ccf43820a7e9d3c1375e, type: 3}
-  maxStackAmount: 64
-  itemPrefab: {fileID: 6589493535566239244, guid: 3cf89d6d5bddcd848b78c013e2d0fc6d, type: 3}
+  id: robot_basic
+  itemName: Robot
+  icon: {fileID: 21300000, guid: 751aa1b6637101946b2fdbb7aa27d6ad, type: 3}
+  maxStackAmount: 1
+  itemPrefab: {fileID: 1391274075805760396, guid: 8fa58bbaf94b89641a48b90acbe1c2ed, type: 3}
   isPlaceable: 1
   isUsable: 0
   isEntity: 1

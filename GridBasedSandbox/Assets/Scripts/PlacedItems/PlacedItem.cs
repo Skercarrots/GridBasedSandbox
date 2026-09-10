@@ -15,10 +15,14 @@ public class PlacedItem : MonoBehaviour
 
     private void Start()
     {
+        // No longer an error: PlacedItem now doubles as the generic "this is
+        // an interactable/placed world object" marker — hand-placed things
+        // like Button or a pre-placed robot legitimately have no ItemData,
+        // since nothing was ever taken out of an inventory to create them.
+        // Only objects spawned via SimpleObjectPlacer.PlaceObjectInCell()
+        // (decorative items or "spawn egg" entities) get one via SetItemData().
         if (itemData == null)
-        {
-            Debug.LogError("PlacedItem: This Placed item has no ItemData reference assigned, assign one when placing an item.");
-        }
+            Debug.Log($"PlacedItem on '{gameObject.name}': no ItemData assigned (expected for hand-placed scene objects).");
     }
 
     public void SetItemData(ItemData data)

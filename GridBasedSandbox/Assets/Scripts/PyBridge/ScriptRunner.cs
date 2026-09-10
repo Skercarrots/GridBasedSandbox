@@ -12,7 +12,13 @@ public class ScriptRunner : MonoBehaviour
     [SerializeField] private MonoBehaviour device;
 
     [Header("Security")]
+    [Tooltip("Seconds before a running script is force-stopped. Set to 0 (or negative) for NO timeout — " +
+             "use that on ScriptRunners driving autonomous/pathfinding devices that are meant to loop " +
+             "forever, and keep a real value on the interactive IDE's runner as a safety net. " +
+             "Can also be changed at runtime with SetTimeout().")]
     [SerializeField] private float scriptTimeout = 10f;
+
+    public void SetTimeout(float seconds) => scriptTimeout = seconds;
 
     [Header("Debug")]
     [SerializeField] private bool verbose = true; // toggle in Inspector
@@ -31,7 +37,7 @@ import random
 _allowed = {'math': math, 'random': random}
 
 import builtins as _builtins
-def _safe_import(name, *args, **kwargs):
+def _safe_import(name, *args, _allowed=_allowed, **kwargs):
     if name in _allowed:
         return _allowed[name]
     raise ImportError(f""import of '{name}' is not allowed"")
@@ -154,7 +160,7 @@ del sys, _builtins, _allowed
 
     private void Update()
     {
-        if (_scriptRunning && Time.time - _scriptStartTime > scriptTimeout)
+        if (_scriptRunning && scriptTimeout > 0f && Time.time - _scriptStartTime > scriptTimeout)
         {
             Debug.LogWarning($"[ScriptRunner] Script timed out after {scriptTimeout}s — stopped.");
             StopScript();
@@ -169,6 +175,19 @@ del sys, _builtins, _allowed
         _stepDone.Reset();
         _actionQueue.Enqueue(action);
         _stepDone.Wait();
+    }
+
+    // Same as above, but for device actions that need to report a result back
+    // to the Python thread — e.g. RobotAPI.move() needs to know whether a step
+    // actually happened (false = blocked) so it can stop early instead of
+    // silently walking into a wall for N iterations.
+    public T EnqueueAndWait<T>(System.Func<T> action)
+    {
+        T result = default;
+        _stepDone.Reset();
+        _actionQueue.Enqueue(() => { result = action(); });
+        _stepDone.Wait();
+        return result;
     }
 
     private IEnumerator ExecuteStep(System.Action action)

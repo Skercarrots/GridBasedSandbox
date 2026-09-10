@@ -19,3 +19,5 @@ MonoBehaviour:
   itemPrefab: {fileID: 7776123483932913170, guid: a62f2a73f35fae444b4d09e0f23c4826, type: 3}
   isPlaceable: 1
   isUsable: 0
+  isEntity: 1
+  voxelBlockId: 0

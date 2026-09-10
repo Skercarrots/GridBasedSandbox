@@ -3,28 +3,27 @@ using UnityEngine;
 // ─────────────────────────────────────────────────────────────────────────────
 //  VoxelBlockPlacer  — Bridges player input with VoxelWorldManager.
 //
+//  CHANGED: Cross-occupancy check against GridSystem.
+//  PlaceBlock() now refuses to place a voxel block in any cell that GridSystem
+//  considers occupied by a live entity (robot, decorative object, etc.).
+//  This fixes the bug where you could place solid terrain through a robot's
+//  body. The check is one GridSystem.IsCellOccupied() call — cheap, no physics
+//  queries, no extra raycasts. It works because GridSystem.cellSize = 1 and
+//  gridOffset = (0,0,0) by convention, so grid cell indices are identical to
+//  the integer block coordinates the voxel world uses.
+//
+//  RemoveBlock() intentionally has NO matching check — removing the block under
+//  an entity is fine (the entity falls, physics handles it). The block being
+//  removed is terrain, not the entity's cell. Accidental entity removal is
+//  already prevented by chunkLayer filtering — hitting an entity's collider
+//  doesn't register as a terrain hit, so RemoveBlock() never fires.
+//
+//  (Original header preserved below)
+//
 //  DESIGN INTENT
 //  Your existing SimpleObjectPlacer/GridSystem are left UNTOUCHED.
 //  This script is a NEW, parallel placer that handles voxel blocks only.
 //  Both can coexist in the same scene; the inventory system is shared.
-//
-//  HOW IT WORKS
-//  1. On right-click: raycasts against chunk colliders, determines which
-//     block face was hit, selects the adjacent empty cell, and calls
-//     VoxelWorldManager.TrySetBlock() with the selected block id.
-//  2. On left-click: removes the hit block (sets to Air, id 0).
-//  3. Uses the same hit-bias trick as your original SimpleObjectPlacer to
-//     avoid floating-point edge hits registering on the wrong block.
-//
-//  BLOCK ID SOURCE
-//  ItemData can optionally carry a voxelBlockId field.
-//  If the selected inventory item has voxelBlockId > 0, it is used.
-//  This lets your existing inventory system drive block placement with
-//  zero changes to InventoryManager.cs.
-//
-//  ENABLING / DISABLING
-//  Call SetActive(true/false) from GameInputManager or toggle
-//  via the public IsActive property. When disabled, no raycasts are fired.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public class VoxelBlockPlacer : MonoBehaviour
@@ -32,52 +31,50 @@ public class VoxelBlockPlacer : MonoBehaviour
     [Header("References")]
     [SerializeField] private VoxelWorldManager worldManager;
     [SerializeField] private VoxelWorldSettings settings;
-    [SerializeField] private Camera playerCamera;
+
+    // ── CHANGED: cross-occupancy ─────────────────────────────────────────────
+    [Tooltip("The scene's GridSystem. Used to prevent placing a voxel block in a " +
+             "cell already occupied by a live entity. Leave empty to skip the check " +
+             "(no crash — placement just won't respect entity occupancy).")]
+    [SerializeField] private GridSystem gridSystem;
 
     [Header("Settings")]
-    [SerializeField] private float maxReach       = 6f;
+    [Tooltip("Only WorldRaycaster hits on this layer count as terrain for placement/removal — " +
+             "keeps this script from reacting to placed objects (robots, buttons, decorations) " +
+             "that WorldRaycaster's own hittableLayers mask also includes.")]
     [SerializeField] private LayerMask chunkLayer;
 
-    [Header("Default block to place (when no item selected)")]
+    [Header("Default block to place (when no item selected, or item has no voxelBlockId)")]
     [SerializeField] private byte defaultBlockId = 3; // e.g. Grass
-
-    // Small offset to push the sample point inside the face we hit
-    private const float HIT_BIAS = 0.001f;
 
     public bool IsActive { get; set; } = true;
 
-    // ── Unity lifecycle ───────────────────────────────────────────────────────
-
-    // NOTE: we intentionally do NOT resolve Camera.main here. Start() runs before
-    // WorldBootstrapper's coroutine finishes, so Camera.main at that point is still
-    // the loading camera, not the player's. SetPlayerCamera() below is the correct
-    // injection path. The lazy fallback inside Raycast() covers standalone use
-    // (e.g. a test scene where there's no WorldBootstrapper at all).
-
-    // ── Public API (call from GameInputManager or WorldBootstrapper) ──────────
-
-    /// <summary>
-    /// Injects the player's camera. Called by WorldBootstrapper immediately after
-    /// the player prefab is instantiated, so the camera reference is guaranteed
-    /// correct by the time any input arrives. Also callable from editor scripts
-    /// or a custom spawn system — anything that spawns the player instead of
-    /// WorldBootstrapper.
-    /// </summary>
-    public void SetPlayerCamera(Camera cam) => playerCamera = cam;
+    // ── Public API (call from GameInputManager) ────────────────────────────
 
     /// <summary>
     /// Places a block in the cell ADJACENT to the hit face.
-    /// Pass the blockId to place (0 = Air = no-op for placement).
+    /// Pass the blockId to place (0 = fall back to defaultBlockId).
+    /// Refuses to place if a live entity (robot, decorative object) already
+    /// occupies that cell — see GridSystem cross-occupancy note above.
     /// </summary>
     public void PlaceBlock(byte blockId = 0)
     {
         if (!IsActive || worldManager == null) return;
 
-        if (!Raycast(out RaycastHit hit)) return;
+        if (!TryGetTerrainHit(out Vector3 point, out Vector3 normal)) return;
 
-        // The placement position is one step OUTSIDE the hit block (along its normal)
-        Vector3 placePoint = hit.point + hit.normal * HIT_BIAS;
+        Vector3 placePoint = point + normal * WorldRaycaster.HitBias;
         Vector3Int blockPos = WorldPointToBlockCoord(placePoint);
+
+        // ── CHANGED: cross-occupancy guard ────────────────────────────────────
+        // Block coords and GridSystem cell coords are the same integer space
+        // (cellSize = 1, gridOffset = 0 — don't change these on GridSystem).
+        if (gridSystem != null && gridSystem.IsCellOccupied(blockPos))
+        {
+            // Silent no-op: a live entity is standing in this voxel cell.
+            // Don't place terrain through it.
+            return;
+        }
 
         byte id = blockId > 0 ? blockId : defaultBlockId;
         worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, id);
@@ -88,10 +85,9 @@ public class VoxelBlockPlacer : MonoBehaviour
     {
         if (!IsActive || worldManager == null) return;
 
-        if (!Raycast(out RaycastHit hit)) return;
+        if (!TryGetTerrainHit(out Vector3 point, out Vector3 normal)) return;
 
-        // Remove the hit block — bias INWARD so we land inside the block
-        Vector3 removePoint = hit.point - hit.normal * HIT_BIAS;
+        Vector3 removePoint = point - normal * WorldRaycaster.HitBias;
         Vector3Int blockPos = WorldPointToBlockCoord(removePoint);
 
         worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, 0);
@@ -99,19 +95,27 @@ public class VoxelBlockPlacer : MonoBehaviour
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private bool Raycast(out RaycastHit hit)
+    private bool TryGetTerrainHit(out Vector3 point, out Vector3 normal)
     {
-        // Lazy fallback: resolves Camera.main on first use. By the time the player
-        // can actually click anything the loading camera is already disabled, so
-        // Camera.main will correctly return the player's camera here. This path
-        // only triggers if SetPlayerCamera() was never called (e.g. a test scene
-        // with no WorldBootstrapper).
-        if (playerCamera == null) playerCamera = Camera.main;
+        var raycaster = WorldRaycaster.Instance;
+        if (raycaster == null || !raycaster.HasHit)
+        {
+            point = default;
+            normal = default;
+            return false;
+        }
 
-        if (playerCamera == null) { hit = default; return false; }
+        int hitLayer = raycaster.Collider.gameObject.layer;
+        if (((1 << hitLayer) & chunkLayer) == 0)
+        {
+            point = default;
+            normal = default;
+            return false;
+        }
 
-        Ray ray = playerCamera.ScreenPointToRay(Input.mousePosition);
-        return Physics.Raycast(ray, out hit, maxReach, chunkLayer);
+        point = raycaster.Point;
+        normal = raycaster.Normal;
+        return true;
     }
 
     /// <summary>
