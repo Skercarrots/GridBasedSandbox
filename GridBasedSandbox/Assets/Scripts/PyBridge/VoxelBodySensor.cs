@@ -53,11 +53,39 @@ public class VoxelBodySensor : MonoBehaviour
 
     // ── Grid math ────────────────────────────────────────────────────────
 
-    /// <summary>The voxel cell this device's body currently occupies (feet position).</summary>
+    /// <summary>
+    /// The voxel cell this device's body currently occupies (feet position).
+    ///
+    /// COORDINATE CONVENTIONS — read before changing the rounding:
+    ///
+    ///   X / Z  use FloorToInt.
+    ///     Block centres are at n+0.5 (e.g. 0.5, 1.5, 2.5).
+    ///     FloorToInt(n+0.5) = n — always the correct block index.
+    ///     Works for negative coords too: FloorToInt(-0.5) = -1 = block -1. ✓
+    ///
+    ///   Y  uses RoundToInt — intentionally different from X/Z.
+    ///     The pivot sits at the robot's feet, which should be at integer Y
+    ///     (standing on the top surface of a block). In practice, physics
+    ///     drift can leave the robot at Y=3.999 or Y=4.001 rather than
+    ///     exactly Y=4. FloorToInt(3.999) = 3, which wrongly identifies the
+    ///     robot as being inside the ground block — IsBlockedBelow() would
+    ///     then check one block too low and miss the actual ground.
+    ///     RoundToInt(3.999) = 4, RoundToInt(4.001) = 4 — both correctly
+    ///     identify the robot as standing in the cell above the ground. ✓
+    ///
+    ///   This asymmetry is load-bearing. Do not "normalise" both axes to the
+    ///   same rounding without understanding the above. The sensor is designed
+    ///   to be called while the robot is stationary (VoxelGridMotor.IsBusy is
+    ///   false); behaviour during mid-fall is undefined by design.
+    /// </summary>
     public Vector3Int OccupiedBlock()
     {
         Vector3 p = transform.position;
-        return new Vector3Int(Mathf.FloorToInt(p.x), Mathf.RoundToInt(p.y), Mathf.FloorToInt(p.z));
+        return new Vector3Int(
+            Mathf.FloorToInt(p.x), // block index = floor of block-centre X (n+0.5)
+            Mathf.RoundToInt(p.y), // round to nearest integer to absorb Y drift (see above)
+            Mathf.FloorToInt(p.z)  // block index = floor of block-centre Z (n+0.5)
+        );
     }
 
     public Vector3Int FacingDirection() => RoundToCardinal(transform.forward);

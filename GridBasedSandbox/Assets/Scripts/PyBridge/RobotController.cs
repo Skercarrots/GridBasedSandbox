@@ -47,17 +47,30 @@ public class RobotController : MonoBehaviour, IScriptableDevice
 
     // ── Actions (called by RobotAPI via ScriptRunner.EnqueueAndWait) ───────
     // Each returns whether the step was actually taken — false means blocked
-    // (a solid voxel was in the way) or already mid-move. RobotAPI uses this
-    // to stop a multi-step move() early instead of grinding against a wall.
+    // (a solid voxel was in the way, the robot is airborne, or the motor is
+    // already mid-move). RobotAPI uses this to stop a multi-step move() early
+    // instead of grinding against a wall or walking off a ledge.
 
     public bool MoveForward()
     {
+        // FIX 3 — guard against initiating a step while the robot is airborne.
+        // Without this check, a script that runs immediately after the robot is
+        // placed (before physics settles it onto the ground) or right after it
+        // walks off a ledge could start a horizontal step mid-fall. The robot
+        // would land offset from the grid and every subsequent sensor read would
+        // be misaligned — the same class of bug as grid drift, but caused by
+        // the physics state rather than floating-point accumulation.
+        if (!Motor.IsGrounded) return false;
+
         if (Sensor.IsBlockedAhead()) return false;
         return Motor.StepInDirection(transform.forward);
     }
 
     public bool MoveBack()
     {
+        // FIX 3 — same grounded guard as MoveForward().
+        if (!Motor.IsGrounded) return false;
+
         if (Sensor.IsBlockedBehind()) return false;
         return Motor.StepInDirection(-transform.forward);
     }

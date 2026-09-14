@@ -25,7 +25,8 @@ public class RobotAPI : BaseDeviceAPI
     // Each call blocks until the physics move finishes before returning.
 
     // robot.move(3)  — moves forward up to N steps; stops early (and returns
-    // the count actually taken) if something blocks the way.
+    // the count actually taken) if a wall, unloaded chunk, airborne state,
+    // or timeout rollback blocks the way.
     public int move(int steps = 1)
     {
         int completed = 0;
@@ -33,6 +34,8 @@ public class RobotAPI : BaseDeviceAPI
         {
             bool moved = _runner.EnqueueAndWait<bool>(() => _robot.MoveForward());
             if (!moved) break;
+            bool success = _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
+            if (!success) break;
             completed++;
         }
         return completed;
@@ -46,6 +49,8 @@ public class RobotAPI : BaseDeviceAPI
         {
             bool moved = _runner.EnqueueAndWait<bool>(() => _robot.MoveBack());
             if (!moved) break;
+            bool success = _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
+            if (!success) break;
             completed++;
         }
         return completed;
@@ -73,6 +78,55 @@ public class RobotAPI : BaseDeviceAPI
 
     public float get_speed()      => _robot.Motor.MoveSpeed;
     public float get_turn_speed() => _robot.Motor.TurnSpeed;
+
+    // ── Grounding ────────────────────────────────────────────────────────────
+
+    // FIX 3 — exposes the grounded state and a blocking wait to Python scripts.
+    //
+    // WHY THIS IS NEEDED
+    // RobotController.MoveForward/MoveBack now return false when the robot is
+    // airborne (the fix for Bug 3). A script that calls robot.move() immediately
+    // after the robot is placed may get 0 steps completed if physics hasn't
+    // settled the robot onto the ground yet — confusing if the script doesn't
+    // expect it. wait_until_grounded() gives scripts a clean way to wait for
+    // landing before doing anything else:
+    //
+    //   robot.wait_until_grounded()
+    //   robot.move(3)
+    //
+    // This is especially important for scripts that run on robot spawn (e.g.
+    // autonomous patrol loops), where the robot might still be falling into its
+    // spawn position when the script begins. Without this call the first move()
+    // silently returns 0 and the loop logic gets confused.
+
+    // robot.is_grounded()  — True if the robot is standing on solid ground.
+    // Motor.IsGrounded is a plain bool flipped in FixedUpdate, not an engine
+    // API call, so it's technically readable from any thread — but routing it
+    // through EnqueueAndWait keeps every device read on the main thread and
+    // consistent with all the other sensing methods.
+    public bool is_grounded()
+        => _runner.EnqueueAndWait<bool>(() => _robot.Motor.IsGrounded);
+
+    // robot.wait_until_grounded()  — blocks the Python thread until the robot
+    // is standing on solid ground, or until timeoutSecs elapses.
+    // Returns True if it landed within the timeout, False if it timed out.
+    //
+    //   # Safe startup pattern for any autonomous script:
+    //   if not robot.wait_until_grounded():
+    //       print("robot didn't land in time — aborting")
+    //   else:
+    //       robot.move(3)
+    public bool wait_until_grounded(float timeoutSecs = 5f)
+    {
+        var deadline = System.DateTime.Now.AddSeconds(timeoutSecs);
+        while (System.DateTime.Now < deadline)
+        {
+            bool grounded = _runner.EnqueueAndWait<bool>(() => _robot.Motor.IsGrounded);
+            if (grounded) return true;
+            System.Threading.Thread.Sleep(50);
+        }
+        return false;
+    }
 
     // ── World sensing (for pathfinding) ─────────────────────────────────────
     // Cheap, exact voxel lookups — no raycasts. Check before you move()
@@ -109,13 +163,6 @@ public class RobotAPI : BaseDeviceAPI
     //   if not s.ahead: robot.move(1)
     public object surroundings()
         => new PythonSurroundings(_runner.EnqueueAndWait(() => _robot.Sensor.Scan()));
-
-    // Motor.IsGrounded is just a plain bool field flipped in FixedUpdate, not
-    // an engine API call, so it won't throw — but reading it from another
-    // thread without synchronization is still a data race. Routing it through
-    // the same queue costs nothing and keeps every device read consistent.
-    public bool is_grounded()
-        => _runner.EnqueueAndWait<bool>(() => _robot.Motor.IsGrounded);
 
     // ── Add more robot actions below as needed ─────────────────────────────
     // public void mine()   => _runner.EnqueueAndWait(() => _robot.Mine());

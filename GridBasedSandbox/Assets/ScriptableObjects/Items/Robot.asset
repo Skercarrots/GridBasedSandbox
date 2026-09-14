@@ -16,7 +16,7 @@ MonoBehaviour:
   itemName: Robot
   icon: {fileID: 21300000, guid: 751aa1b6637101946b2fdbb7aa27d6ad, type: 3}
   maxStackAmount: 1
-  itemPrefab: {fileID: 1391274075805760396, guid: 8fa58bbaf94b89641a48b90acbe1c2ed, type: 3}
+  itemPrefab: {fileID: 9178133373544056975, guid: d10124840175e914eab19c65d32c3b0a, type: 3}
   isPlaceable: 1
   isUsable: 0
   isEntity: 1
