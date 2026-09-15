@@ -27,16 +27,32 @@ public class RobotAPI : BaseDeviceAPI
     // robot.move(3)  — moves forward up to N steps; stops early (and returns
     // the count actually taken) if a wall, unloaded chunk, airborne state,
     // or timeout rollback blocks the way.
+    // When descending a staircase/slope, automatically waits for the robot to
+    // touch down before initiating the next step so multi-step moves down slopes work smoothly.
     public int move(int steps = 1)
     {
         int completed = 0;
         for (int i = 0; i < steps; i++)
         {
+            if (!_robot.Motor.PreserveAirMomentum)
+            {
+                if (!wait_until_grounded(3f)) break;
+            }
+
             bool moved = _runner.EnqueueAndWait<bool>(() => _robot.MoveForward());
             if (!moved) break;
             bool success = _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
             if (!success) break;
             completed++;
+
+            if (!_robot.Motor.PreserveAirMomentum)
+            {
+                bool stillGrounded = _runner.EnqueueAndWait<bool>(() => _robot.Motor.IsGrounded);
+                if (!stillGrounded)
+                {
+                    if (!wait_until_grounded(3f)) break;
+                }
+            }
         }
         return completed;
     }
@@ -47,11 +63,25 @@ public class RobotAPI : BaseDeviceAPI
         int completed = 0;
         for (int i = 0; i < steps; i++)
         {
+            if (!_robot.Motor.PreserveAirMomentum)
+            {
+                if (!wait_until_grounded(3f)) break;
+            }
+
             bool moved = _runner.EnqueueAndWait<bool>(() => _robot.MoveBack());
             if (!moved) break;
             bool success = _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
             if (!success) break;
             completed++;
+
+            if (!_robot.Motor.PreserveAirMomentum)
+            {
+                bool stillGrounded = _runner.EnqueueAndWait<bool>(() => _robot.Motor.IsGrounded);
+                if (!stillGrounded)
+                {
+                    if (!wait_until_grounded(3f)) break;
+                }
+            }
         }
         return completed;
     }
@@ -78,6 +108,17 @@ public class RobotAPI : BaseDeviceAPI
 
     public float get_speed()      => _robot.Motor.MoveSpeed;
     public float get_turn_speed() => _robot.Motor.TurnSpeed;
+
+    // ── Airborne Momentum (Cannonball Mode) ───────────────────────────────────
+
+    // robot.set_preserve_momentum(True)  — if True, horizontal velocity is NOT
+    // killed when the robot steps off a ledge, allowing it to fly through the
+    // air like a cannonball projectile before snapping onto the grid on touchdown.
+    public void set_preserve_momentum(bool enable)
+        => _robot.Motor.PreserveAirMomentum = enable;
+
+    public bool get_preserve_momentum()
+        => _robot.Motor.PreserveAirMomentum;
 
     // ── Grounding ────────────────────────────────────────────────────────────
 
@@ -163,6 +204,64 @@ public class RobotAPI : BaseDeviceAPI
     //   if not s.ahead: robot.move(1)
     public object surroundings()
         => new PythonSurroundings(_runner.EnqueueAndWait(() => _robot.Sensor.Scan()));
+
+    // ── Jumping ───────────────────────────────────────────────────────────────
+    // Each jump method enqueues the action on the main thread and then blocks
+    // the Python thread until the robot touches down (wait_until_grounded).
+    // This makes jump() synchronous from Python's perspective — the script
+    // only resumes after the robot has landed, just like move() only resumes
+    // after the step is complete.
+
+    // robot.jump()  — vertical hop in place. Returns True if the jump completed
+    // successfully and the robot landed, False if blocked by ceiling or airborne state.
+    public bool jump()
+    {
+        bool jumped = _runner.EnqueueAndWait<bool>(() => _robot.Jump());
+        if (!jumped) return false;
+
+        // Block until the robot lands so the next script line runs on solid ground.
+        wait_until_grounded(5f);
+        return _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
+    }
+
+    // robot.jump_forward()  — jump up and forward onto a 1-block-higher surface.
+    // Pre-checks headroom above robot, landing cell ahead+up, and headroom at
+    // landing. Returns True if the jump arc completed, False if blocked.
+    public bool jump_forward()
+    {
+        bool jumped = _runner.EnqueueAndWait<bool>(() => _robot.JumpForward());
+        if (!jumped) return false;
+
+        // Wait for landing — the robot is mid-arc after JumpForward().
+        wait_until_grounded(5f);
+        return _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
+    }
+
+    // robot.jump_back()  — jump up and backward onto a 1-block-higher surface.
+    // Same clearance checks as jump_forward() but in the opposite direction.
+    public bool jump_back()
+    {
+        bool jumped = _runner.EnqueueAndWait<bool>(() => _robot.JumpBack());
+        if (!jumped) return false;
+
+        wait_until_grounded(5f);
+        return _runner.EnqueueAndWait<bool>(() => _robot.Motor.LastStepSucceeded);
+    }
+
+    // robot.can_jump()  — returns True if the robot has enough headroom (Y+1 and Y+2)
+    // to perform an in-place jump without bonking into a ceiling.
+    public bool can_jump()
+        => _runner.EnqueueAndWait<bool>(() => _robot.Sensor.CanJump());
+
+    // robot.can_jump_ahead()  — returns True if the 4-cell clearance check
+    // for a forward jump passes (takeoff headroom + landing + landing headroom).
+    // Use before jump_forward() to decide whether to attempt it.
+    public bool can_jump_ahead()
+        => _runner.EnqueueAndWait<bool>(() => _robot.Sensor.CanJumpAhead());
+
+    // robot.can_jump_behind()  — same check for a backward jump.
+    public bool can_jump_behind()
+        => _runner.EnqueueAndWait<bool>(() => _robot.Sensor.CanJumpBehind());
 
     // ── Add more robot actions below as needed ─────────────────────────────
     // public void mine()   => _runner.EnqueueAndWait(() => _robot.Mine());

@@ -53,14 +53,14 @@ public class RobotController : MonoBehaviour, IScriptableDevice
 
     public bool MoveForward()
     {
-        // FIX 3 — guard against initiating a step while the robot is airborne.
+        // FIX 3 — guard against initiating a step while the robot is airborne (unless in PreserveAirMomentum cannonball mode).
         // Without this check, a script that runs immediately after the robot is
         // placed (before physics settles it onto the ground) or right after it
         // walks off a ledge could start a horizontal step mid-fall. The robot
         // would land offset from the grid and every subsequent sensor read would
         // be misaligned — the same class of bug as grid drift, but caused by
         // the physics state rather than floating-point accumulation.
-        if (!Motor.IsGrounded) return false;
+        if (!Motor.IsGrounded && !Motor.PreserveAirMomentum) return false;
 
         if (Sensor.IsBlockedAhead()) return false;
         return Motor.StepInDirection(transform.forward);
@@ -69,7 +69,7 @@ public class RobotController : MonoBehaviour, IScriptableDevice
     public bool MoveBack()
     {
         // FIX 3 — same grounded guard as MoveForward().
-        if (!Motor.IsGrounded) return false;
+        if (!Motor.IsGrounded && !Motor.PreserveAirMomentum) return false;
 
         if (Sensor.IsBlockedBehind()) return false;
         return Motor.StepInDirection(-transform.forward);
@@ -77,4 +77,43 @@ public class RobotController : MonoBehaviour, IScriptableDevice
 
     public bool TurnLeft()  => Motor.TurnBy(-90f);
     public bool TurnRight() => Motor.TurnBy(90f);
+
+    // ── Jump actions ────────────────────────────────────────────────────────
+    // Each checks the relevant clearance conditions before delegating to the
+    // motor. If any condition fails, the method returns false and does nothing
+    // — the robot is never forced into a jump it can't complete.
+
+    /// <summary>Vertical jump in place. Requires: grounded + full apex headroom clear.</summary>
+    public bool Jump()
+    {
+        // Must be standing on solid ground — no double-jumps.
+        if (!Motor.IsGrounded) return false;
+        // Must have headroom above to launch — checks Y+1 and Y+2 (apex reaches 2.20)
+        // to prevent bashing into ceilings.
+        if (!Sensor.CanJump()) return false;
+
+        return Motor.Jump();
+    }
+
+    /// <summary>Jump forward onto a 1-block-higher surface. Requires: grounded +
+    /// headroom + landing cell clear + headroom above landing clear.</summary>
+    public bool JumpForward()
+    {
+        if (!Motor.IsGrounded) return false;
+        // CanJumpAhead checks: headroom above robot, landing cell ahead+up,
+        // and headroom above landing (3 cells total — see VoxelBodySensor).
+        if (!Sensor.CanJumpAhead()) return false;
+
+        return Motor.JumpInDirection(transform.forward);
+    }
+
+    /// <summary>Jump backward onto a 1-block-higher surface behind the robot.</summary>
+    public bool JumpBack()
+    {
+        if (!Motor.IsGrounded) return false;
+        // CanJumpBehind: same 3-cell check as CanJumpAhead but reversed.
+        if (!Sensor.CanJumpBehind()) return false;
+
+        return Motor.JumpInDirection(-transform.forward);
+    }
 }

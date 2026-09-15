@@ -53,6 +53,11 @@ public class VoxelGridMotor : MonoBehaviour
     [SerializeField] private float gravity = -28f;
     [SerializeField] private float maxFallSpeed = 40f;
 
+    [Header("Jump")]
+    [Tooltip("Max jump apex height in units. 1.25 clears a 1-block step with margin. " +
+             "Jump velocity is computed as sqrt(2 * |gravity| * jumpHeight).")]
+    [SerializeField] private float jumpHeight = 1.25f;
+
     [Header("Ground Check")]
     [Tooltip("Layers considered ground/terrain — set to your voxel chunk layer.")]
     [SerializeField] private LayerMask groundLayers;
@@ -79,9 +84,25 @@ public class VoxelGridMotor : MonoBehaviour
     // instead of teleporting the robot into whatever was blocking it.
     private Vector3? _stepOrigin;
 
-    public bool  IsBusy              => _targetPos.HasValue || _targetRot.HasValue;
+    [Header("Airborne Physics")]
+    [Tooltip("If true, the robot preserves horizontal velocity when stepping off a ledge into mid-air, behaving like a launched projectile until landing.")]
+    [SerializeField] private bool preserveAirMomentum = false;
+
+    private bool _wasAirborneInMomentum;
+
+    // Jumping physics tracking:
+    // _isJumping stays true from takeoff until the robot touches back down on the ground.
+    // Including it in IsBusy guarantees that ScriptRunner's ExecuteStep coroutine
+    // (yield return new WaitUntil(() => !sd.IsAnimating)) waits until the jump has
+    // completely finished and the robot is resting stably on the ground before returning.
+    private bool  _isJumping;
+    private float _jumpTakeoffTime;
+    private float _jumpDeadline;
+
+    public bool  IsBusy              => _targetPos.HasValue || _targetRot.HasValue || _isJumping;
     public bool  IsGrounded          => _isGrounded;
     public bool  LastStepSucceeded   { get; private set; } = true;
+    public bool  PreserveAirMomentum { get => preserveAirMomentum; set => preserveAirMomentum = value; }
     public float MoveSpeed           => moveSpeed;
     public float TurnSpeed           => turnSpeed;
 
@@ -189,11 +210,108 @@ public class VoxelGridMotor : MonoBehaviour
         return true;
     }
 
+    // ── JUMPING ─────────────────────────────────────────────────────────────
+    // Uses the same physics formula as PlayerController:
+    //   v_jump = sqrt(2 * |gravity| * jumpHeight)
+    // With gravity = -28 and jumpHeight = 1.25 → v ≈ 8.37 m/s, producing
+    // an apex exactly 1.25 units above takeoff — enough to clear a 1-block
+    // step with a small margin so the collider doesn't clip the block corner.
+
+    /// <summary>Vertical-only jump in place. Returns false if not grounded or busy.</summary>
+    public bool Jump()
+    {
+        // GUARD: robot must be on the ground — no double jumps.
+        if (!_isGrounded) return false;
+        if (IsBusy)       return false;
+
+        // Track jump state so IsBusy remains true until touchdown
+        _isJumping        = true;
+        _jumpTakeoffTime  = Time.time;
+        _jumpDeadline     = Time.time + 3.0f;
+        LastStepSucceeded = true;
+
+        // Apply upward impulse using the PlayerController jump formula.
+        float vJump = Mathf.Sqrt(2f * Mathf.Abs(gravity) * jumpHeight);
+        Vector3 vel = _rb.linearVelocity;
+        _rb.linearVelocity = new Vector3(vel.x, vJump, vel.z);
+        return true;
+    }
+
+    /// <summary>Jump + 1-unit horizontal step (parabolic arc).
+    /// Used by RobotController.JumpForward/JumpBack to climb 1-block stairs.
+    /// The horizontal target is set exactly like StepInDirection, while the
+    /// vertical impulse gives the arc. DriveTranslation handles horizontal
+    /// convergence while ApplyGravity pulls the robot down through the arc.</summary>
+    public bool JumpInDirection(Vector3 direction)
+    {
+        // GUARD: must be grounded and not already busy — same as Jump().
+        if (!_isGrounded) return false;
+        if (IsBusy)       return false;
+
+        Vector3 flat = new Vector3(direction.x, 0f, direction.z);
+        if (flat.sqrMagnitude < 0.0001f) return false;
+        flat = RoundToCardinal(flat.normalized);
+
+        // Snap origin to block centre (same grid-drift fix as StepInDirection).
+        Vector3 snappedOrigin = new Vector3(
+            SnapToBlockCenter(_rb.position.x),
+            _rb.position.y,
+            SnapToBlockCenter(_rb.position.z));
+
+        // Horizontal target is 1 unit in the jump direction, 1 unit UP from
+        // the origin — the robot lands on top of the adjacent block.
+        _stepOrigin       = snappedOrigin;
+        _targetPos        = snappedOrigin + flat + Vector3.up;
+
+        // Generous timeout: jump arc takes longer than a flat step because the
+        // robot must rise and fall. Use at least 2.2 u/s for jump speed calculation.
+        float horizSpeed  = Mathf.Max(moveSpeed, 2.2f);
+        _stepDeadline     = Time.time + ExpectedTimeout(1f, horizSpeed) * 1.5f;
+        _jumpTakeoffTime  = Time.time;
+        _jumpDeadline     = _stepDeadline;
+        _isJumping        = true;
+        LastStepSucceeded = false;
+
+        // Vertical impulse — same formula as Jump().
+        float vJump = Mathf.Sqrt(2f * Mathf.Abs(gravity) * jumpHeight);
+        Vector3 vel = _rb.linearVelocity;
+        _rb.linearVelocity = new Vector3(vel.x, vJump, vel.z);
+
+        return true;
+    }
+
     // ── Physics loop ─────────────────────────────────────────────────────
 
     private void FixedUpdate()
     {
         GroundCheck();
+
+        // JUMP STATE UPDATE:
+        // Detect touchdown after takeoff. During the first 0.12s window, the robot is
+        // still lifting off from the floor, so ground contact is ignored.
+        // Once past takeoff, if the robot touches ground while moving downward or stopped (vy <= 0.2),
+        // the jump has finished and the robot has landed safely.
+        if (_isJumping)
+        {
+            bool pastTakeoff = (Time.time - _jumpTakeoffTime) > 0.12f;
+            bool timedOut    = Time.time > _jumpDeadline;
+
+            if (timedOut || (pastTakeoff && _isGrounded && _rb.linearVelocity.y <= 0.2f))
+            {
+                _isJumping = false;
+            }
+        }
+
+        // If the robot was airborne in momentum mode and just touched ground, snap to nearest block center
+        if (_wasAirborneInMomentum && _isGrounded)
+        {
+            _wasAirborneInMomentum = false;
+            float snapX = SnapToBlockCenter(_rb.position.x);
+            float snapZ = SnapToBlockCenter(_rb.position.z);
+            _rb.position = new Vector3(snapX, _rb.position.y, snapZ);
+            _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
+        }
+
         DriveTranslation();
         DriveRotation();
         ApplyGravity();
@@ -237,6 +355,12 @@ public class VoxelGridMotor : MonoBehaviour
     {
         if (!_targetPos.HasValue)
         {
+            if (preserveAirMomentum && !_isGrounded)
+            {
+                // Preserve horizontal flight velocity in mid-air (cannonball mode)
+                return;
+            }
+
             Vector3 v = _rb.linearVelocity;
             _rb.linearVelocity = new Vector3(0f, v.y, 0f);
             return;
@@ -255,6 +379,7 @@ public class VoxelGridMotor : MonoBehaviour
             if (timedOut)
             {
                 LastStepSucceeded = false;
+                _isJumping        = false;
                 // FIX 2 — the original code snapped FORWARD to the target on
                 // timeout, teleporting the robot through whatever physical obstacle
                 // was blocking it. The robot would end up inside a collider, and
@@ -275,23 +400,39 @@ public class VoxelGridMotor : MonoBehaviour
                     $"[VoxelGridMotor] Step on '{gameObject.name}' timed out — " +
                     $"rolling back to ({snapX:F2}, {snapZ:F2}). " +
                     $"A physical obstacle blocked the path after the sensor check passed.");
+
+                _rb.position       = new Vector3(snapX, _rb.position.y, snapZ);
+                _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
             }
             else
             {
                 LastStepSucceeded = true;
                 snapX = SnapToBlockCenter(target.x);
                 snapZ = SnapToBlockCenter(target.z);
+
+                _rb.position = new Vector3(snapX, _rb.position.y, snapZ);
+
+                if (preserveAirMomentum && !_isGrounded)
+                {
+                    _wasAirborneInMomentum = true;
+                    // Maintain current horizontal flight velocity through the air
+                }
+                else
+                {
+                    _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
+                }
             }
 
-            _rb.position       = new Vector3(snapX, _rb.position.y, snapZ);
-            _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
             _targetPos         = null;
             _stepOrigin        = null;
             return;
         }
 
         Vector3 dir   = toTarget / dist;
-        float   speed = Mathf.Min(moveSpeed, dist / Time.fixedDeltaTime);
+        // For directional jump steps, enforce a minimum horizontal velocity of 2.2 u/s so the arc
+        // comfortably crosses the block edge before gravity pulls the robot below 1.0 height.
+        float curSpeed = _isJumping ? Mathf.Max(moveSpeed, 2.2f) : moveSpeed;
+        float speed    = Mathf.Min(curSpeed, dist / Time.fixedDeltaTime);
         _rb.linearVelocity = new Vector3(dir.x * speed, _rb.linearVelocity.y, dir.z * speed);
     }
 

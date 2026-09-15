@@ -47,6 +47,72 @@ public class VoxelBodySensor : MonoBehaviour
     public bool IsBlockedAbove()  => IsSolid(OccupiedBlock() + Vector3Int.up);
     public bool IsBlockedBelow()  => IsSolid(OccupiedBlock() + Vector3Int.down);
 
+    // ── Jump-specific spatial checks ──────────────────────────────────────
+    // These verify whether the robot has enough clearance to execute a jump.
+    //
+    // HEADROOM CALCULATION & CEILING CLEARANCE:
+    // With jump apex h = 1.25 units and robot collider height 0.95:
+    //   Takeoff feet: Y = 0
+    //   Takeoff head: Y = 0.95
+    //   Jump apex feet: Y = 1.25
+    //   Jump apex head: Y = 1.25 + 0.95 = 2.20
+    //
+    // This means:
+    // 1. A block at Y=+1 (above robot head) MUST be air, or the robot cannot even begin jumping.
+    // 2. A block at Y=+2 (two blocks above feet): bottom face is at Y=2.0. If solid, the robot's
+    //    apex (2.20) would collide into it! Therefore, Y=+2 must also be air.
+    // 3. A block at Y=+3 or higher: bottom face is at Y=3.0 or higher. Since 2.20 < 3.0, the robot
+    //    comfortably clears without touching it! So blocks at Y=+3 do not block jumping.
+    //
+    // For directional jumps (CanJumpAhead / CanJumpBehind):
+    //   - Takeoff headroom: Y=+1 and Y=+2 above robot must be air.
+    //   - Landing cell: ahead + Y=+1 must be air (this is where the robot will land).
+    //   - Landing headroom: ahead + Y=+2 must be air (standing clearance at destination).
+    // If ANY of these cells are solid, the jump is refused.
+
+    /// <summary>Can the robot perform a vertical jump in place? Checks 2 blocks of headroom (Y+1 and Y+2).</summary>
+    public bool CanJump()
+    {
+        Vector3Int pos = OccupiedBlock();
+        if (IsSolid(pos + Vector3Int.up))     return false; // Y+1 immediate headroom
+        if (IsSolid(pos + Vector3Int.up * 2)) return false; // Y+2 apex clearance (apex reaches 2.20)
+        return true;
+    }
+
+    /// <summary>Can the robot jump forward and land on top of a 1-block step ahead?</summary>
+    public bool CanJumpAhead()
+    {
+        Vector3Int pos = OccupiedBlock();
+        Vector3Int facing = FacingDirection();
+
+        // 1. Takeoff headroom (must be air so robot can leave the ground)
+        if (IsSolid(pos + Vector3Int.up))          return false;
+        if (IsSolid(pos + Vector3Int.up * 2))      return false;
+
+        // 2. Landing cell (ahead + Y=+1, where the robot's feet will touch down)
+        if (IsSolid(pos + facing + Vector3Int.up)) return false;
+
+        // 3. Standing headroom at destination (ahead + Y=+2, clearance for the robot's body)
+        if (IsSolid(pos + facing + Vector3Int.up * 2)) return false;
+
+        return true;
+    }
+
+    /// <summary>Can the robot jump backward and land on top of a 1-block step behind?</summary>
+    public bool CanJumpBehind()
+    {
+        Vector3Int pos = OccupiedBlock();
+        Vector3Int facing = FacingDirection();
+
+        // Same 4-cell clearance check as CanJumpAhead, but in the opposite direction.
+        if (IsSolid(pos + Vector3Int.up))           return false;
+        if (IsSolid(pos + Vector3Int.up * 2))       return false;
+        if (IsSolid(pos - facing + Vector3Int.up))  return false;
+        if (IsSolid(pos - facing + Vector3Int.up * 2)) return false;
+
+        return true;
+    }
+
     public Surroundings Scan() => new Surroundings(
         IsBlockedAhead(), IsBlockedBehind(), IsBlockedLeft(), IsBlockedRight(),
         IsBlockedAbove(), IsBlockedBelow());
