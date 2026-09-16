@@ -24,11 +24,13 @@ public class RobotAPI : BaseDeviceAPI
     // ── Movement ───────────────────────────────────────────────────────────
     // Each call blocks until the physics move finishes before returning.
 
-    // robot.move(3)  — moves forward up to N steps; stops early (and returns
-    // the count actually taken) if a wall, unloaded chunk, airborne state,
-    // or timeout rollback blocks the way.
-    // When descending a staircase/slope, automatically waits for the robot to
-    // touch down before initiating the next step so multi-step moves down slopes work smoothly.
+    /// <summary>
+    /// Moves forward up to <paramref name="steps"/> grid cells. Stops early and returns the number
+    /// of steps actually taken if blocked by a wall, obstacle, or unloaded chunk.
+    /// Python example: <c>robot.move(3)</c>
+    /// </summary>
+    /// <param name="steps">The number of forward steps to take.</param>
+    /// <returns>The number of steps completed successfully.</returns>
     public int move(int steps = 1)
     {
         int completed = 0;
@@ -57,7 +59,13 @@ public class RobotAPI : BaseDeviceAPI
         return completed;
     }
 
-    // robot.move_back(1)
+    /// <summary>
+    /// Moves backward up to <paramref name="steps"/> grid cells. Stops early and returns the number
+    /// of steps actually taken if blocked.
+    /// Python example: <c>robot.move_back(1)</c>
+    /// </summary>
+    /// <param name="steps">The number of backward steps to take.</param>
+    /// <returns>The number of steps completed successfully.</returns>
     public int move_back(int steps = 1)
     {
         int completed = 0;
@@ -86,11 +94,17 @@ public class RobotAPI : BaseDeviceAPI
         return completed;
     }
 
-    // robot.turn_left()
+    /// <summary>
+    /// Turns the robot 90 degrees to the left (counter-clockwise).
+    /// Python example: <c>robot.turn_left()</c>
+    /// </summary>
     public void turn_left()
         => _runner.EnqueueAndWait<bool>(() => _robot.TurnLeft());
 
-    // robot.turn_right()
+    /// <summary>
+    /// Turns the robot 90 degrees to the right (clockwise).
+    /// Python example: <c>robot.turn_right()</c>
+    /// </summary>
     public void turn_right()
         => _runner.EnqueueAndWait<bool>(() => _robot.TurnRight());
 
@@ -98,15 +112,28 @@ public class RobotAPI : BaseDeviceAPI
     // Tune how fast this robot moves/turns — handy to slow down for a demo,
     // or speed up once a pathfinding script is trusted to run unsupervised.
 
-    // robot.set_speed(4.0)  — units (voxels) per second per move() step
+    /// <summary>
+    /// Sets the linear movement speed in units (voxels) per second.
+    /// Python example: <c>robot.set_speed(4.0)</c>
+    /// </summary>
     public void set_speed(float unitsPerSecond)
         => _robot.Motor.SetMoveSpeed(unitsPerSecond);
 
-    // robot.set_turn_speed(360)  — degrees per second for turn_left/turn_right
+    /// <summary>
+    /// Sets the angular turning speed in degrees per second for <see cref="turn_left"/> and <see cref="turn_right"/>.
+    /// Python example: <c>robot.set_turn_speed(360)</c>
+    /// </summary>
     public void set_turn_speed(float degreesPerSecond)
         => _robot.Motor.SetTurnSpeed(degreesPerSecond);
 
+    /// <summary>
+    /// Gets the current linear movement speed in units per second.
+    /// </summary>
     public float get_speed()      => _robot.Motor.MoveSpeed;
+
+    /// <summary>
+    /// Gets the current angular turning speed in degrees per second.
+    /// </summary>
     public float get_turn_speed() => _robot.Motor.TurnSpeed;
 
     // ── Airborne Momentum (Cannonball Mode) ───────────────────────────────────

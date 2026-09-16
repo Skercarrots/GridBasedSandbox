@@ -6,12 +6,12 @@ public class CellVisualizer : MonoBehaviour
     public GridSystem gridSystem;
     private GameObject cellUIInstance;
 
-    // Ajuste para evitar Z-Fighting
+    // Offset to prevent Z-Fighting
     private const float Z_FIGHTING_OFFSET = 0.01f;
 
     private void Start()
     {
-        if (gridSystem == null) Debug.LogWarning("CellVisualizer: GridSystem não está referenciado!");
+        if (gridSystem == null) Debug.LogWarning("CellVisualizer: GridSystem is not referenced!");
 
         if (cellUIPrefab != null)
         {
@@ -43,7 +43,7 @@ public class CellVisualizer : MonoBehaviour
         Vector3Int gridIndex = gridSystem.WorldToGridPosition(raycaster.AdjustedPoint);
         Vector3 cellCenterWorldPosition = gridSystem.GridToWorldPosition(gridIndex);
 
-        // Ajuste para a base (baseado na metade do tamanho)
+        // Base offset (based on half the cell size)
         float halfCellSize = gridSystem.cellSize / 2f;
         float baseFloorY = cellCenterWorldPosition.y - halfCellSize;
 

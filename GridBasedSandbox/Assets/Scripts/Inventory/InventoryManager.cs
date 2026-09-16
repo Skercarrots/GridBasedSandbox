@@ -17,6 +17,9 @@ public class InventoryManager : MonoBehaviour
     [SerializeField] private ItemData selectedItem;
     private List<InventorySlot> slots;
     
+    /// <summary>
+    /// Initializes the inventory slots and sets up the corresponding UI bar.
+    /// </summary>
     public void InitializeInventoryBar()
     {
         slots = new List<InventorySlot>();
@@ -31,9 +34,13 @@ public class InventoryManager : MonoBehaviour
         // Pass -1 as old slot since there's nothing to deselect yet
         inventoryUI.UpdateSelectionVisual(currentSelectedSlot, -1);
 
-        Debug.Log($"Inventário inicializado com {slots.Count} slots.");
+        Debug.Log($"Inventory initialized with {slots.Count} slots.");
     }
 
+    /// <summary>
+    /// Changes the active hotbar slot index, updating the selected item and UI highlight.
+    /// </summary>
+    /// <param name="value">The desired target slot index (will be clamped to valid range).</param>
     public void ChangeCurrentSelectedSlot(int value)
     {
         int oldSelectedSlotID = currentSelectedSlot;
@@ -49,17 +56,21 @@ public class InventoryManager : MonoBehaviour
     private void SelectSlot(int slotIndex)
     {
         selectedItem = slots[slotIndex].itemStack?.itemData;
-
-        //Debug.Log($"Slot {slotIndex} selecionado. Item: {(selectedItem != null ? selectedItem.name : "Vazio")}");
     }
 
+    /// <summary>
+    /// Attempts to add a given amount of an item to the inventory, either stacking into an existing slot or filling an empty slot.
+    /// </summary>
+    /// <param name="item">The item data to add.</param>
+    /// <param name="amount">The quantity to add.</param>
+    /// <returns><c>true</c> if the item was successfully added; <c>false</c> if the inventory is full.</returns>
     public bool TryAddItem(ItemData item, int amount)
     {
         int slotIndex = FindAvailableSlotOfType(item);
     
         if (slotIndex == -1)
         {
-            Debug.Log("Inventário cheio!");
+            Debug.Log("Inventory full!");
             return false;
         }
 
@@ -67,19 +78,14 @@ public class InventoryManager : MonoBehaviour
 
         if (targetSlot.itemStack == null)
         {
-            // Cria um novo stack no slot vazio
             targetSlot.itemStack = new ItemStack(item, amount);
         }
         else
         {
-            // Aumenta a quantidade do item existente
             targetSlot.itemStack.amount += amount;
         }
     
-        // NOVO: Avisa a UI para atualizar o desenho do slot na tela
         inventoryUI.UpdateSlotUI(slotIndex, targetSlot.itemStack);
-
-        //Debug.Log($"Item {item.name} adicionado ao slot {slotIndex}. Quantidade atual: {targetSlot.itemStack.amount}");
         return true;
     }
 
@@ -103,16 +109,25 @@ public class InventoryManager : MonoBehaviour
         return -1; 
     }
 
+    /// <summary>
+    /// Returns the <see cref="ItemData"/> currently selected in the active hotbar slot, or <c>null</c> if empty.
+    /// </summary>
     public ItemData GetSelectedItem()
     {
         return selectedItem;
     }
 
+    /// <summary>
+    /// Refreshes the currently selected item data reference for the active slot.
+    /// </summary>
     public void RefreshSelectedSlot()
     {
         SelectSlot(currentSelectedSlot);
     }
 
+    /// <summary>
+    /// Returns the complete list of inventory slots.
+    /// </summary>
     public List<InventorySlot> GetSlots() => slots;
     
 }

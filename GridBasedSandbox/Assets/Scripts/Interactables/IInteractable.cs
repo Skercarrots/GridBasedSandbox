@@ -2,7 +2,14 @@ using UnityEngine;
 
 public interface IInteractable
 {
-    string GetInteractionLabel(); // "Open Chest", "Use Furnace", etc.
+    /// <summary>
+    /// Returns the user-facing text prompt displayed when hovering this interactable (e.g. "Open Chest", "Program Robot").
+    /// </summary>
+    string GetInteractionLabel();
+
+    /// <summary>
+    /// Executes the primary interaction behavior for this object.
+    /// </summary>
     void Interact();
 }
 

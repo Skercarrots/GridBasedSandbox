@@ -1,9 +1,8 @@
 using UnityEngine;
 
-// CHANGED: reads GameState.IsIDEOpen at the top of Update() and early-returns,
-// which suppresses hotbar slot selection, block placement, entity placement,
-// and interaction clicks while the IDE panel is open.
-
+/// <summary>
+/// Handles gameplay input for inventory hotbar selection, block/entity placement, and world interaction.
+/// </summary>
 public class GameInputManager : MonoBehaviour
 {
     [SerializeField] private GridSystem gridSystem;
@@ -13,7 +12,7 @@ public class GameInputManager : MonoBehaviour
 
     void Update()
     {
-        // ── CHANGED: no gameplay input while IDE is open ─────────────────────
+        // Suppress gameplay input while the in-game IDE is open
         if (GameState.IsIDEOpen) return;
 
         InventoryInput();

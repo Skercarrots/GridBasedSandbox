@@ -15,19 +15,21 @@ public class CameraAPI : BaseDeviceAPI
 
     // ── Camera-specific Python methods ─────────────────────────────────────
 
-    // camera.scan()  — returns the zone/tile the camera sees
+    /// <summary>
+    /// Scans and returns the zone or tile information currently observed by the camera.
+    /// </summary>
     public string scan()
         => _camera.ScanArea();
 
-    // camera.motion_detected()  — returns True/False
+    /// <summary>
+    /// Returns true if motion was detected within the camera's field of view.
+    /// </summary>
     public bool motion_detected()
         => _camera.IsMotionDetected();
 
-    // camera.nearest_device()  — returns the name of the closest device visible
+    /// <summary>
+    /// Returns the device name of the nearest visible scriptable device.
+    /// </summary>
     public string nearest_device()
         => _camera.GetNearestDevice();
-
-    // ── Add more camera methods below as needed ────────────────────────────
-    // public void rotate(float angle) => _camera.Rotate(angle);
-    // public void set_zoom(float zoom) => _camera.SetZoom(zoom);
 }

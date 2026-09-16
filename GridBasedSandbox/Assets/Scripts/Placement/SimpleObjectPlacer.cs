@@ -1,23 +1,9 @@
 using UnityEngine;
 
-// CHANGED: Cross-occupancy check against VoxelWorldManager.
-// PlaceObjectInCell() now refuses to place an entity in a grid cell that
-// contains solid voxel terrain. This fixes the bug where you could spawn
-// a robot inside a solid block.
-//
-// The check is one IsSolidBlock() call — no raycasts, no allocs.
-// It uses VoxelWorldManager.Instance (singleton) so no Inspector ref is
-// needed; SimpleObjectPlacer was never aware of the voxel world before, and
-// a singleton read is the minimal-coupling way to add this.
-//
-// HOW IT WORKS WITH RAYCASTER ADJUSTED POINT:
-//   When the player hits a top face (normal = up), WorldRaycaster.AdjustedPoint
-//   is nudged slightly above the surface, e.g. Y ≈ 4.001 for terrain at Y = 3.
-//   GridSystem.WorldToGridPosition floors that to grid Y = 4 — the empty cell
-//   above the block. IsSolidBlock(x, 4, z) returns false → entity placed. ✓
-//   If instead there IS a solid block at Y = 4 (e.g. placing against a wall
-//   from the side), IsSolidBlock returns true → placement blocked. ✓
-
+/// <summary>
+/// Handles instantiation and removal of non-voxel grid entities and decorative objects,
+/// ensuring cross-occupancy validation with both the grid system and voxel world.
+/// </summary>
 public class SimpleObjectPlacer : MonoBehaviour
 {
     [SerializeField] private GridSystem gridSystem;
@@ -28,7 +14,7 @@ public class SimpleObjectPlacer : MonoBehaviour
 
     private void Start()
     {
-        if (gridSystem == null) Debug.LogWarning("SimpleObjectPlacer: GridSystem não está referenciado!");
+        if (gridSystem == null) Debug.LogWarning("SimpleObjectPlacer: GridSystem is not referenced!");
         _placedLayerIndex = LayerMaskToIndex(placedObjectLayer);
     }
 
@@ -39,6 +25,10 @@ public class SimpleObjectPlacer : MonoBehaviour
         return gridSystem.WorldToGridPosition(raycaster.AdjustedPoint);
     }
 
+    /// <summary>
+    /// Gets the grid cell coordinate corresponding to the placed item currently targeted by the raycaster.
+    /// </summary>
+    /// <returns>The grid coordinate, or <c>null</c> if no placed item is targeted.</returns>
     public Vector3Int? GetCellFromPlacedItem()
     {
         var raycaster = WorldRaycaster.Instance;
@@ -47,13 +37,17 @@ public class SimpleObjectPlacer : MonoBehaviour
         PlacedItem placedItem = raycaster.Collider.GetComponentInParent<PlacedItem>();
         if (placedItem == null)
         {
-            Debug.LogWarning("O objeto atingido não possui o componente PlacedItem.");
+            Debug.LogWarning("The hit object does not have a PlacedItem component.");
             return null;
         }
 
         return gridSystem.WorldToGridPosition(placedItem.transform.position);
     }
 
+    /// <summary>
+    /// Places the currently selected inventory entity or decorative item into the targeted grid cell.
+    /// Checks for cell occupancy and ensures the cell does not intersect solid voxel terrain.
+    /// </summary>
     public void PlaceObjectInCell()
     {
         if (!(GetGridIndexAtPosition() is Vector3Int gridIndex))
@@ -62,14 +56,10 @@ public class SimpleObjectPlacer : MonoBehaviour
         if (gridSystem.IsCellOccupied(gridIndex))
             return;
 
-        // ── CHANGED: cross-occupancy guard against voxel terrain ─────────────
-        // Prevents spawning an entity inside a solid block. Uses the same
-        // integer cell space as the voxel grid (GridSystem.cellSize = 1,
-        // gridOffset = 0 — keep these at their defaults).
+        // Cross-occupancy guard against solid voxel terrain
         var world = VoxelWorldManager.Instance;
         if (world != null && world.IsSolidBlock(gridIndex.x, gridIndex.y, gridIndex.z))
         {
-            // Silent no-op: voxel terrain is occupying this cell — can't place here.
             return;
         }
 
@@ -92,6 +82,9 @@ public class SimpleObjectPlacer : MonoBehaviour
         gridSystem.PlaceObjectInCell(gridIndex, newObj);
     }
 
+    /// <summary>
+    /// Removes and destroys the placed object currently targeted under the cursor.
+    /// </summary>
     public void RemoveObjectFromCell()
     {
         if (!(GetCellFromPlacedItem() is Vector3Int gridIndex))
@@ -109,7 +102,7 @@ public class SimpleObjectPlacer : MonoBehaviour
     {
         if (mask.value == 0)
         {
-            Debug.LogWarning("SimpleObjectPlacer: placedObjectLayer não está configurado! Usando layer 0.");
+            Debug.LogWarning("SimpleObjectPlacer: placedObjectLayer is not configured! Using layer 0.");
             return 0;
         }
 
@@ -119,6 +112,9 @@ public class SimpleObjectPlacer : MonoBehaviour
         return index;
     }
 
+    /// <summary>
+    /// Returns the <see cref="PlacedItem"/> currently hovered under the player's crosshair/cursor.
+    /// </summary>
     public PlacedItem GetPlacedItemUnderCursor()
     {
         var raycaster = WorldRaycaster.Instance;

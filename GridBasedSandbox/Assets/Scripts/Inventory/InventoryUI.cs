@@ -8,11 +8,11 @@ public class InventoryUI : MonoBehaviour
     [SerializeField] private GameObject slotUIPrefab;
     [SerializeField] private Transform slotsParent;
 
-    [Header("Sprites de Fundo")]
-    [SerializeField] private Sprite defaultSlotSprite; // Sprite para o fundo normal do slot
-    [SerializeField] private Sprite selectedSlotSprite; // Sprite para o fundo do slot selecionado
+    [Header("Background Sprites")]
+    [SerializeField] private Sprite defaultSlotSprite; // Sprite for the default slot background
+    [SerializeField] private Sprite selectedSlotSprite; // Sprite for the selected slot background
     
-    // Lista para guardar os GameObjects dos slots que aparecem na tela
+    // List to hold the slot GameObjects displayed on screen
     private List<GameObject> slotUIObjects = new List<GameObject>();
     
     private void Awake()
@@ -20,18 +20,22 @@ public class InventoryUI : MonoBehaviour
         InventoryBarUI.SetActive(true);
     }
 
+    /// <summary>
+    /// Instantiates and configures a UI slot game object on the inventory bar.
+    /// </summary>
+    /// <param name="slotID">The unique slot index.</param>
+    /// <param name="itemStack">The initial item stack to display, or <c>null</c> if empty.</param>
     public void CreateBarSlotUI(int slotID, ItemStack itemStack)
     {
         if (slotUIObjects.Count >= 10)
         {
-            Debug.LogWarning($"Não é possível criar mais de 10 slots. SlotID {slotID} não criado.");
+            Debug.LogWarning($"Cannot create more than 10 slots. SlotID {slotID} was not created.");
             return;
         }
 
         GameObject slotUIObj = Instantiate(slotUIPrefab, slotsParent);
         slotUIObj.name = $"Slot_{slotID}";
         
-        // Garante que o slot recém-criado começa com o sprite padrão
         if (slotUIObj.TryGetComponent<Image>(out Image slotBackground))
         {
             slotBackground.sprite = defaultSlotSprite;
@@ -42,7 +46,11 @@ public class InventoryUI : MonoBehaviour
         UpdateSlotUI(slotID, itemStack);
     }
 
-    // Método para atualizar o ícone do item (continua igual)
+    /// <summary>
+    /// Updates the icon and visibility of a specific slot on the inventory bar.
+    /// </summary>
+    /// <param name="slotID">The slot index to update.</param>
+    /// <param name="itemStack">The current item stack to display, or <c>null</c> to clear the icon.</param>
     public void UpdateSlotUI(int slotID, ItemStack itemStack)
     {
         if (slotID < 0 || slotID >= slotUIObjects.Count) return;
@@ -63,11 +71,12 @@ public class InventoryUI : MonoBehaviour
     }
 
     /// <summary>
-    /// Atualiza o sprite de fundo do novo slot selecionado e do slot que foi desmarcado.
+    /// Updates the background sprite for both the newly selected slot and the deselected slot.
     /// </summary>
+    /// <param name="newSelectedSlotID">The newly active slot index.</param>
+    /// <param name="oldSelectedSlotID">The previously active slot index, or -1 if none.</param>
     public void UpdateSelectionVisual(int newSelectedSlotID, int oldSelectedSlotID)
     {
-        // 1. Desativa o destaque do slot antigo (segurança de índice)
         if (oldSelectedSlotID >= 0 && oldSelectedSlotID < slotUIObjects.Count)
         {
             GameObject oldSlot = slotUIObjects[oldSelectedSlotID];
@@ -77,7 +86,6 @@ public class InventoryUI : MonoBehaviour
             }
         }
 
-        // 2. Ativa o destaque do novo slot selecionado (segurança de índice)
         if (newSelectedSlotID >= 0 && newSelectedSlotID < slotUIObjects.Count)
         {
             GameObject newSlot = slotUIObjects[newSelectedSlotID];
@@ -88,6 +96,10 @@ public class InventoryUI : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Shows or hides the complete inventory bar UI.
+    /// </summary>
+    /// <param name="value"><c>true</c> to show; <c>false</c> to hide.</param>
     public void ToggleInventoryBar(bool value)
     {
         InventoryBarUI.SetActive(value);

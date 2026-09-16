@@ -1,15 +1,18 @@
 using UnityEngine;
 
+/// <summary>
+/// Definition ScriptableObject for an item type, defining display data, stack limits, and placement behavior.
+/// </summary>
 [CreateAssetMenu(fileName = "ItemData", menuName = "Inventory/ItemData")]
 public class ItemData : ScriptableObject
 {
-    public string id; // ID único para salvar/carregar
+    public string id; // Unique ID for saving/loading
     public string itemName;
 
     public Sprite icon;
 
-    public int maxStackAmount = 64; // Quantidade máxima por stack
-    public GameObject itemPrefab; // O modelo 3D para construir
+    public int maxStackAmount = 64;
+    public GameObject itemPrefab; // 3D prefab to construct or spawn
     public bool isPlaceable;
     public bool isUsable;
 
@@ -20,6 +23,9 @@ public class ItemData : ScriptableObject
     public byte voxelBlockId;
 }
 
+/// <summary>
+/// Represents a concrete quantity of an item within an inventory slot.
+/// </summary>
 [System.Serializable]
 public class ItemStack
 {

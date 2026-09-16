@@ -26,30 +26,43 @@ public abstract class BaseDeviceAPI
 
     // ── Messaging ──────────────────────────────────────────────────────────
 
-    // Send a message to a specific device by name
-    //   robot.send("Camera_1", "look_here", "sector_b")
+    /// <summary>
+    /// Sends a targeted message to a specific device by its registered device name.
+    /// Python example: <c>robot.send("Camera_1", "look_here", "sector_b")</c>
+    /// </summary>
+    /// <param name="to">The destination device name.</param>
+    /// <param name="topic">The message topic / subject.</param>
+    /// <param name="data">Optional payload string.</param>
     public void send(string to, string topic, string data = "")
         => DeviceBus.Send(to, topic, data, _name);
 
-    // Send the same message to all devices
-    //   robot.broadcast("alert", "fire_detected")
+    /// <summary>
+    /// Broadcasts a message to all registered devices on the bus.
+    /// Python example: <c>robot.broadcast("alert", "fire_detected")</c>
+    /// </summary>
+    /// <param name="topic">The message topic / subject.</param>
+    /// <param name="data">Optional payload string.</param>
     public void broadcast(string topic, string data = "")
         => DeviceBus.Broadcast(topic, data, _name);
 
     // ── Receiving ──────────────────────────────────────────────────────────
 
-    // Check for a waiting message — returns None if nothing is waiting
-    //   msg = robot.receive()
-    //   if msg: print(msg.topic, msg.data)
+    /// <summary>
+    /// Checks for a waiting message without blocking.
+    /// Returns <c>null</c> (None in Python) if no message is in the queue.
+    /// </summary>
+    /// <returns>A message object containing sender, topic, and data, or <c>null</c>.</returns>
     public object receive()
     {
         var msg = DeviceBus.Poll(_name);
         return msg == null ? null : new PythonMessage(msg);
     }
 
-    // Block until a message arrives or timeout (default 30s)
-    //   msg = robot.wait_for_message()
-    //   msg = robot.wait_for_message(5.0)  # timeout after 5 seconds
+    /// <summary>
+    /// Blocks execution until any message arrives for this device or until the timeout expires.
+    /// </summary>
+    /// <param name="timeoutSecs">Maximum duration to wait in seconds (default: 30s).</param>
+    /// <returns>The received message object, or <c>null</c> if timed out.</returns>
     public object wait_for_message(float timeoutSecs = 30f)
     {
         var deadline = System.DateTime.Now.AddSeconds(timeoutSecs);
@@ -62,8 +75,12 @@ public abstract class BaseDeviceAPI
         return null;
     }
 
-    // Block until a specific topic arrives
-    //   robot.wait_for_topic("start")
+    /// <summary>
+    /// Blocks execution until a message matching a specific topic arrives for this device or until the timeout expires.
+    /// </summary>
+    /// <param name="topic">The topic filter to match.</param>
+    /// <param name="timeoutSecs">Maximum duration to wait in seconds (default: 30s).</param>
+    /// <returns>The received message object, or <c>null</c> if timed out.</returns>
     public object wait_for_topic(string topic, float timeoutSecs = 30f)
     {
         var deadline = System.DateTime.Now.AddSeconds(timeoutSecs);
@@ -78,27 +95,35 @@ public abstract class BaseDeviceAPI
 
     // ── Status board ───────────────────────────────────────────────────────
 
-    // Report this device's status — other scripts can read it
-    //   robot.report("state", "done")
-    //   robot.report("ore_count", str(count))
+    /// <summary>
+    /// Publishes a status key-value pair for this device to the shared status board.
+    /// </summary>
+    /// <param name="key">Status property name.</param>
+    /// <param name="value">Status value string.</param>
     public void report(string key, string value)
         => DeviceBus.SetStatus(_name, key, value);
 
-    // Read any device's reported status
-    //   status = robot.get_status("Robot_B", "state")
+    /// <summary>
+    /// Reads a reported status value from another device.
+    /// </summary>
+    /// <param name="deviceName">The device name to inspect.</param>
+    /// <param name="key">The status property key.</param>
+    /// <returns>The reported value string, or an empty string if not found.</returns>
     public string get_status(string deviceName, string key)
         => DeviceBus.GetStatus(deviceName, key);
 
     // ── Discovery ──────────────────────────────────────────────────────────
 
-    // List all registered device names
-    //   all_devices = robot.find_devices()
+    /// <summary>
+    /// Lists all registered device names currently active on the device bus.
+    /// </summary>
     public string[] find_devices()
         => DeviceRegistry.GetNames();
 
-    // List registered device names filtered by type
-    //   cameras = robot.find_devices("camera")
-    //   robots  = robot.find_devices("robot")
+    /// <summary>
+    /// Lists registered device names filtered by device type (e.g. "robot", "camera").
+    /// </summary>
+    /// <param name="deviceType">The device type to filter by.</param>
     public string[] find_devices(string deviceType)
         => DeviceRegistry.GetNamesOfType(deviceType);
 
