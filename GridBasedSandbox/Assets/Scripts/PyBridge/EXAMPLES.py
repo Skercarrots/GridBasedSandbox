@@ -112,3 +112,143 @@ while True:
             robot.turn_left()
         else:
             robot.turn_right()
+
+
+# ── Example 11: Grounding check and safe spawn startup ────────────────────
+# Essential for autonomous scripts on spawn: waits for physics to settle the
+# robot on the ground so move() doesn't fail due to being airborne.
+print(f"Checking ground status: {robot.is_grounded()}")
+if not robot.wait_until_grounded(5.0):
+    print("Warning: Robot did not settle on ground in time!")
+else:
+    print("Robot grounded and ready to move.")
+    robot.move(2)
+
+
+# ── Example 12: In-place jump with headroom check ─────────────────────────
+# Verifies overhead clearance before jumping in place.
+if robot.can_jump():
+    print("Headroom clear, hopping in place...")
+    success = robot.jump()
+    print(f"Jump landed successfully: {success}")
+else:
+    print("Cannot jump: ceiling or obstacle overhead!")
+
+
+# ── Example 13: Step-climbing onto ledges (jump_forward & jump_back) ──────
+# Checks clearance and climbs up a 1-block high elevation step.
+if robot.can_jump_ahead():
+    print("Ledge ahead is clear, jumping up and forward!")
+    robot.jump_forward()
+else:
+    print("Cannot jump forward: blocked or no valid landing cell.")
+
+# Similarly, hopping backward onto an elevated cell behind:
+if robot.can_jump_behind():
+    print("Clearance behind is valid, jumping back!")
+    robot.jump_back()
+
+
+# ── Example 14: Step-counting & collision handling ────────────────────────
+# move() and move_back() return the actual number of steps completed.
+# If an obstacle or unloaded chunk blocks the path, it stops safely.
+requested_steps = 5
+steps_taken = robot.move(requested_steps)
+if steps_taken < requested_steps:
+    print(f"Path blocked after {steps_taken}/{requested_steps} steps!")
+    robot.turn_left()
+else:
+    print(f"Successfully traveled all {steps_taken} steps.")
+
+
+# ── Example 15: Directional proximity sensors ─────────────────────────────
+# Precise single-direction voxel checks (main-thread synchronized).
+print(f"Blocked Ahead:  {robot.is_blocked_ahead()}")
+print(f"Blocked Behind: {robot.is_blocked_behind()}")
+print(f"Blocked Left:   {robot.is_blocked_left()}")
+print(f"Blocked Right:  {robot.is_blocked_right()}")
+print(f"Blocked Above:  {robot.is_blocked_above()}")
+print(f"Blocked Below:  {robot.is_blocked_below()}")
+
+
+# ── Example 16: Preserve momentum (Cannonball Mode) ───────────────────────
+# When enabled, horizontal velocity is NOT killed when walking off ledges,
+# allowing the robot to fly forward through the air before snapping to grid.
+robot.set_preserve_momentum(True)
+print(f"Airborne momentum enabled: {robot.get_preserve_momentum()}")
+robot.set_speed(8.0)
+robot.move(4)   # Run off a cliff or ledge at high speed!
+# Restore default safe ground behavior:
+robot.set_preserve_momentum(False)
+
+
+# ── Example 17: Waiting for a specific topic ──────────────────────────────
+# Blocks execution until a message with the exact topic arrives (or timeout).
+print("Waiting for 'deploy' signal...")
+msg = robot.wait_for_topic("deploy", 15.0)
+if msg:
+    print(f"Received deploy command from {msg.sender} with data: {msg.data}")
+    robot.move(2)
+else:
+    print("Timed out waiting for deploy topic.")
+
+
+# ── Example 18: Reading status board across devices ───────────────────────
+# Devices can query key-value statuses reported by other devices.
+robot.report("battery", "98%")
+robot.report("mode", "autonomous")
+
+# Read camera or peer robot status:
+cam_alert = robot.get_status("Camera_1", "last_alert")
+print(f"Camera_1 last alert status: {cam_alert}")
+
+
+# ── Example 19: Camera tracking nearest device ────────────────────────────
+# (Assign to a ScriptRunner whose Device is a CameraController)
+if camera.motion_detected():
+    target = camera.nearest_device()
+    zone = camera.scan()
+    print(f"Motion in {zone}! Nearest device spotted: {target}")
+    if target:
+        camera.send(target, "halt", f"Spotted in {zone}")
+
+
+# ── Example 20: All-terrain rover (Jumping + Sensing + Patrol) ────────────
+# Set scriptTimeout to 0 (unlimited) in the Inspector.
+# Wanders the world, climbs 1-block hills/ledges, avoids drops, and listens
+# for stop commands.
+import random
+
+robot.wait_until_grounded()
+robot.set_speed(3.0)
+robot.report("state", "exploring")
+print("Rover started...")
+
+while True:
+    # Check for incoming commands
+    msg = robot.receive()
+    if msg and msg.topic == "stop":
+        robot.report("state", "idle")
+        print("Rover stopped by remote command.")
+        break
+
+    s = robot.surroundings()
+
+    if s.ahead:
+        # Blocked in front — try jumping up onto the block if it's a 1-block step
+        if robot.can_jump_ahead():
+            print("Obstacle ahead: climbing 1-block step!")
+            robot.jump_forward()
+        else:
+            # Wall is too high or blocked — turn around
+            if random.random() < 0.5:
+                robot.turn_left()
+            else:
+                robot.turn_right()
+    elif not s.below:
+        # Drop / cliff directly ahead — avoid falling off unless intended
+        robot.turn_left()
+    else:
+        # Path ahead is clear and ground is solid
+        robot.move(1)
+

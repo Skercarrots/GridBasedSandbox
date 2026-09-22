@@ -1,3 +1,7 @@
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+
 /// <summary>
 /// In-game programming interface controller.
 /// Manages window toggling, reading player code, running/stopping scripts, and formatting sanitization.
