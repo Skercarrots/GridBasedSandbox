@@ -13,11 +13,7 @@ MonoBehaviour:
   m_Name: DefaultLoadout
   m_EditorClassIdentifier: Assembly-CSharp::DefaultLoadoutSource
   defaultItems:
-  - item: {fileID: 11400000, guid: 56292d52a4632a24fa01681ea49f8187, type: 2}
-    amount: 1
-  - item: {fileID: 11400000, guid: d81e34223ed23fd4599067b075008872, type: 2}
-    amount: 1
-  - item: {fileID: 11400000, guid: 5b2a3e1a2b5fdde4bb58711f94bcfbb1, type: 2}
-    amount: 1
   - item: {fileID: 11400000, guid: 98950a7d768ef804199816f2d327f523, type: 2}
+    amount: 1
+  - item: {fileID: 11400000, guid: 86b35f00b2cdfe84b9032d20a984d7fa, type: 2}
     amount: 1

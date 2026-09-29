@@ -90,7 +90,24 @@ public class VoxelBlockPlacer : MonoBehaviour
         Vector3 removePoint = point - normal * WorldRaycaster.HitBias;
         Vector3Int blockPos = WorldPointToBlockCoord(removePoint);
 
+        // ── Unbreakable guard (single enforcement choke point) ────────────────
+        // Any code path that removes blocks — player, robot.mine_*, etc. — must
+        // go through here or call IsBlockBreakable() first.
+        byte existingId = worldManager.GetBlockAt(blockPos.x, blockPos.y, blockPos.z);
+        if (!IsBlockBreakable(settings.blockRegistry, existingId)) return;
+
         worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, 0);
+    }
+
+    // ── Public helpers ────────────────────────────────────────────────────────
+
+    /// <summary>Returns true if the block with the given id can be broken.
+    /// Use this from robot mine_* calls before attempting removal.</summary>
+    public static bool IsBlockBreakable(VoxelBlockRegistry registry, byte blockId)
+    {
+        if (blockId == 0) return false; // air — nothing to break
+        VoxelBlockType def = registry.GetBlock(blockId);
+        return def == null || !def.isUnbreakable;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

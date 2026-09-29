@@ -43,6 +43,14 @@ public class OverworldGenerator : WorldGenerator
     [Tooltip("Blocks of solid ground below the surface that caves never carve through.")]
     [SerializeField] private int caveMinDepthBelowSurface = 4;
 
+    [Header("Bedrock")]
+    [Tooltip("The block type used for the unbreakable bedrock layer at the bottom of the world.")]
+    [SerializeField] private VoxelBlockType bedrockBlock;
+    [Tooltip("Minimum number of bedrock layers at the bottom of the world.")]
+    [Range(1, 5)] [SerializeField] private int bedrockLayerMin = 1;
+    [Tooltip("Maximum number of bedrock layers (actual thickness varies per-column via noise).")]
+    [Range(1, 8)] [SerializeField] private int bedrockLayerMax = 5;
+
     public override void Prepare()
     {
         // Bake every biome's AnimationCurve into a thread-safe LUT before this
@@ -58,6 +66,9 @@ public class OverworldGenerator : WorldGenerator
         int worldOriginZ = data.WorldOriginZ;
         int minY = settings.minHeight;
         int maxY = settings.maxHeight;
+
+        // Cache bedrock id once (0 = no bedrock block assigned → skip layer)
+        byte bedrockId = bedrockBlock != null ? bedrockBlock.blockId : (byte)0;
 
         for (int lx = 0; lx < data.Width; lx++)
         for (int lz = 0; lz < data.Width; lz++)
@@ -78,12 +89,24 @@ public class OverworldGenerator : WorldGenerator
             float flattened = Mathf.Lerp(shaped, 0.5f, erosionValue * 0.5f);
             int   surfaceY  = Mathf.Clamp(Mathf.RoundToInt(Mathf.Lerp(minY, maxY, flattened)), minY, maxY);
 
+            // Bedrock: deterministic ragged layer at world bottom.
+            // Noise-driven thickness per column, using cheap primes for spatial variation.
+            int bedrockTop = minY; // world-Y at or below which blocks become bedrock
+            if (bedrockId != 0)
+            {
+                float bedrockNoise = VoxelNoise.Sample3D(wx * 4.17f, 0f, wz * 4.17f, 8f);
+                int thickness = bedrockLayerMin + Mathf.FloorToInt(bedrockNoise * (bedrockLayerMax - bedrockLayerMin + 1));
+                thickness = Mathf.Clamp(thickness, bedrockLayerMin, bedrockLayerMax);
+                bedrockTop = minY + thickness - 1; // inclusive top of bedrock band
+            }
+
             for (int ly = 0; ly < data.Height; ly++)
             {
                 int wy = settings.LocalYToWorld(ly);
-                byte block = AssignBlock(wy, surfaceY, biome, settings);
+                byte block = AssignBlock(wy, surfaceY, bedrockTop, bedrockId, biome, settings);
 
-                if (block != 0 && wy <= surfaceY - caveMinDepthBelowSurface)
+                // Cave carving — never carve bedrock or blocks near the surface
+                if (block != 0 && block != bedrockId && wy <= surfaceY - caveMinDepthBelowSurface)
                 {
                     float cave = VoxelNoise.Sample3D(wx, wy, wz, caveScale);
                     if (cave > caveThreshold) block = 0;
@@ -97,20 +120,31 @@ public class OverworldGenerator : WorldGenerator
         data.IsDirty = true;
     }
 
-    private static byte AssignBlock(int wy, int surfaceY, BiomeDefinition biome, VoxelWorldSettings settings)
+    /// <summary>Determines which block to place at world Y <paramref name="wy"/>
+    /// given the surface height, bedrock boundary, current biome, and global settings.</summary>
+    private static byte AssignBlock(int wy, int surfaceY, int bedrockTop, byte bedrockId,
+                                     BiomeDefinition biome, VoxelWorldSettings settings)
     {
+        // Above surface → air or water
         if (wy > surfaceY)
         {
             bool underwater = wy <= settings.seaLevel && settings.waterBlock != null;
             return underwater ? settings.waterBlock.blockId : (byte)0;
         }
 
+        // Surface block
         if (wy == surfaceY)
             return biome.surfaceBlock.blockId;
 
+        // Subsurface filler (dirt, sand, etc.)
         if (wy >= surfaceY - biome.subsurfaceDepth)
             return biome.subsurfaceBlock.blockId;
 
+        // Bedrock layer at world bottom
+        if (bedrockId != 0 && wy <= bedrockTop)
+            return bedrockId;
+
+        // Everything else is stone
         return settings.stoneBlock != null ? settings.stoneBlock.blockId : (byte)1;
     }
 }

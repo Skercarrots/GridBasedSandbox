@@ -17,8 +17,8 @@ MonoBehaviour:
   stoneBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
   seaLevel: 0
   chunkWidth: 16
-  minHeight: -32
-  maxHeight: 80
+  minHeight: -64
+  maxHeight: 192
   viewDistanceInChunks: 16
   maxChunkBuildsPerFrame: 3
   seed: 10

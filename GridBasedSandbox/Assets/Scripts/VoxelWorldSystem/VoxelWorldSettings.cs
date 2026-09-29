@@ -45,10 +45,10 @@ public class VoxelWorldSettings : ScriptableObject
     // ── World Height ──────────────────────────────────────────────────────────
     [Header("World Height Limits")]
     [Tooltip("Minimum block Y in world space (inclusive).")]
-    public int minHeight = -32;
+    public int minHeight = -64;
 
     [Tooltip("Maximum block Y in world space (inclusive).")]
-    public int maxHeight = 80;
+    public int maxHeight = 192;
 
     // ── Streaming / View Distance ─────────────────────────────────────────────
     [Header("Streaming")]

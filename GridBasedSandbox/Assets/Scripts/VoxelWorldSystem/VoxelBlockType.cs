@@ -32,6 +32,52 @@ public class VoxelBlockType : ScriptableObject
     [Tooltip("Transparent blocks (glass, water) still cull neighbours.")]
     public bool isTransparent = false;
 
+    [Tooltip("If true, this block cannot be broken by the player or robots (e.g. Bedrock).")]
+    public bool isUnbreakable = false;
+
+    // ── Placeholder rendering ────────────────────────────────────────────────
+    [Header("Placeholder")]
+    [Tooltip("Color used for placeholder rendering when no atlas tile is assigned. " +
+             "If left at default (0,0,0,0), auto-derived from a hash of blockName.")]
+    public Color placeholderColor = new Color(0, 0, 0, 0);
+
+    /// <summary>Reserved atlas tile (last slot in a 4×4 atlas) used for placeholder
+    /// blocks. Should be a solid white tile in the atlas, or any neutral tile that
+    /// accepts vertex-color tinting.</summary>
+    public static readonly Vector2Int PlaceholderTile = new Vector2Int(3, 3);
+
+    /// <summary>True if this block has no real atlas art and should render as a
+    /// vertex-colored placeholder. Air (id 0) is never a placeholder.</summary>
+    public bool IsPlaceholder
+    {
+        get
+        {
+            if (blockId == 0) return false;
+            // A block is placeholder if its defaultTile is negative (unset) or
+            // points at the reserved placeholder tile with no per-face overrides.
+            if (defaultTile.x < 0) return true;
+            if (defaultTile == PlaceholderTile
+                && tileTop.x < 0 && tileBottom.x < 0
+                && tileFront.x < 0 && tileBack.x < 0
+                && tileLeft.x < 0 && tileRight.x < 0)
+                return true;
+            return false;
+        }
+    }
+
+    /// <summary>Returns the placeholder color, auto-generating a deterministic
+    /// colour from the block name hash if the artist hasn't set one.</summary>
+    public Color ResolvedPlaceholderColor
+    {
+        get
+        {
+            if (placeholderColor.a > 0.01f) return placeholderColor;
+            int hash = blockName?.GetHashCode() ?? blockId;
+            float h = Mathf.Abs(hash % 360) / 360f;
+            return Color.HSVToRGB(h, 0.6f, 0.85f);
+        }
+    }
+
     // ── Texture Atlas ─────────────────────────────────────────────────────────
     [Header("Texture Atlas (tile col, row)")]
     [Tooltip("Fallback tile used for any face that has no override.")]
@@ -46,9 +92,13 @@ public class VoxelBlockType : ScriptableObject
     public Vector2Int tileRight  = new Vector2Int(-1, 0);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-    /// <summary>Returns the resolved tile for a given face index (0=Top … 5=Right).</summary>
+
+    /// <summary>Returns the resolved tile for a given face index (0=Top … 5=Right).
+    /// Placeholder blocks always return <see cref="PlaceholderTile"/>.</summary>
     public Vector2Int GetTileForFace(int faceIndex)
     {
+        if (IsPlaceholder) return PlaceholderTile;
+
         Vector2Int candidate = faceIndex switch
         {
             0 => tileTop,

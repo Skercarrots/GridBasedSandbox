@@ -107,6 +107,7 @@ public static class VoxelMeshBuilder
         var vertices  = new List<Vector3>();
         var triangles = new List<int>();
         var uvs       = new List<Vector2>();
+        var colors    = new List<Color>();
 
         for (int lx = 0; lx < chunk.Width; lx++)
         for (int lz = 0; lz < chunk.Width; lz++)
@@ -127,6 +128,9 @@ public static class VoxelMeshBuilder
                     if (blockDef == null || !blockDef.isSolid) continue;
 
                     var blockOrigin = new Vector3(lx, ly, lz);
+                    Color vertColor = blockDef.IsPlaceholder
+                        ? blockDef.ResolvedPlaceholderColor
+                        : Color.white;
 
                     for (int face = 0; face < 6; face++)
                     {
@@ -141,7 +145,10 @@ public static class VoxelMeshBuilder
                         int baseVertex = vertices.Count;
 
                         for (int v = 0; v < 4; v++)
+                        {
                             vertices.Add(blockOrigin + FaceVertices[face, v]);
+                            colors.Add(vertColor);
+                        }
 
                         foreach (int t in QuadTriangles)
                             triangles.Add(baseVertex + t);
@@ -164,7 +171,7 @@ public static class VoxelMeshBuilder
             }
         }
 
-        return new MeshData(vertices, triangles, uvs);
+        return new MeshData(vertices, triangles, uvs, colors);
     }
 
     // ── Neighbour sampling helper ─────────────────────────────────────────────
@@ -199,12 +206,14 @@ public readonly struct MeshData
     public readonly List<Vector3> Vertices;
     public readonly List<int>     Triangles;
     public readonly List<Vector2> UVs;
+    public readonly List<Color>   Colors;
 
-    public MeshData(List<Vector3> v, List<int> t, List<Vector2> u)
+    public MeshData(List<Vector3> v, List<int> t, List<Vector2> u, List<Color> c = null)
     {
         Vertices  = v;
         Triangles = t;
         UVs       = u;
+        Colors    = c;
     }
 
     public bool IsEmpty => Vertices == null || Vertices.Count == 0;
@@ -218,6 +227,8 @@ public readonly struct MeshData
         mesh.SetVertices(Vertices);
         mesh.SetTriangles(Triangles, 0);
         mesh.SetUVs(0, UVs);
+        if (Colors != null && Colors.Count > 0)
+            mesh.SetColors(Colors);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
     }
