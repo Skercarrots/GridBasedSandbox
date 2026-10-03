@@ -13,5 +13,10 @@ MonoBehaviour:
   m_Name: BiomeRegistry
   m_EditorClassIdentifier: Assembly-CSharp::BiomeRegistry
   biomes:
+  - {fileID: 11400000, guid: d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9, type: 2}
+  - {fileID: 11400000, guid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6, type: 2}
+  - {fileID: 11400000, guid: b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7, type: 2}
+  - {fileID: 11400000, guid: c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8, type: 2}
+  - {fileID: 11400000, guid: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0, type: 2}
   - {fileID: 11400000, guid: 18697533fb1f03643a993a8ccfc59873, type: 2}
-  fallbackBiome: {fileID: 11400000, guid: 18697533fb1f03643a993a8ccfc59873, type: 2}
+  fallbackBiome: {fileID: 11400000, guid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6, type: 2}

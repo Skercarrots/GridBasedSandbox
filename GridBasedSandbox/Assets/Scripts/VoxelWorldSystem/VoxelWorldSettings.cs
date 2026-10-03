@@ -81,6 +81,16 @@ public class VoxelWorldSettings : ScriptableObject
     [Tooltip("Material that holds the block atlas texture. Must use a shader with vertex colours if you want tinting.")]
     public Material chunkMaterial;
 
+    // ── Debug ──────────────────────────────────────────────────────────────────
+    [Header("Debug")]
+    [Tooltip("When true, only ore blocks are rendered (everything else becomes invisible). " +
+             "Useful for verifying ore distribution and vein shapes in the world.")]
+    public bool debugOresOnly = false;
+
+    [Tooltip("Block IDs considered 'ore' for the debugOresOnly filter. " +
+             "If empty when debugOresOnly is true, all blocks with ID >= 11 are shown.")]
+    public byte[] debugOreBlockIds = { 11, 12, 13, 14 };
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>UV size of one tile in a square atlas.</summary>

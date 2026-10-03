@@ -10,53 +10,53 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 46ea1fb6714450b4e9e4a9d2da97de55, type: 3}
-  m_Name: Biome_Dunes
+  m_Name: Biome_FantasyHighlands
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinition
-  biomeName: Dunes
-  minTemperature: 0.7
+  biomeName: Fantasy Highlands
+  minTemperature: 0
   maxTemperature: 1
   minHumidity: 0
-  maxHumidity: 0.3
-  minContinentalness: 0.25
-  maxContinentalness: 0.85
-  minErosion: 0.4
-  maxErosion: 1
-  minWeirdness: 0
-  maxWeirdness: 0.5
-  surfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
-  subsurfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
-  subsurfaceDepth: 4
-  steepSlopeBlock: {fileID: 0}
-  slopeSteepnessThreshold: 1.2
-  snowlineBlock: {fileID: 0}
-  snowlineY: 80
-  beachBlock: {fileID: 0}
-  beachDepthBelowSeaLevel: 3
+  maxHumidity: 1
+  minContinentalness: 0.4
+  maxContinentalness: 0.8
+  minErosion: 0
+  maxErosion: 0.5
+  minWeirdness: 0.6
+  maxWeirdness: 1
+  surfaceBlock: {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
+  subsurfaceBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
+  subsurfaceDepth: 2
+  steepSlopeBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
+  slopeSteepnessThreshold: 0.9
+  snowlineBlock: {fileID: 11400000, guid: 33fb1e6cc9e5b4946890b62f30f4ff3a, type: 2}
+  snowlineY: 90
+  beachBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
+  beachDepthBelowSeaLevel: 2
   heightCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.1
+      value: 0.3
       inSlope: 0
-      outSlope: 0.6
+      outSlope: 0.4
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.5
-      value: 0.42
+      time: 0.4
+      value: 0.52
       inSlope: 0.5
-      outSlope: 0.5
+      outSlope: 0.55
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.65
-      inSlope: 0.4
+      value: 0.82
+      inSlope: 0.5
       outSlope: 0
       tangentMode: 0
       weightedMode: 0
@@ -66,7 +66,8 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   heightMultiplier: 1
-  ridgeStrength: 0
+  ridgeStrength: 0.45
   features: []
   decorationPrefabs: []
   decorationDensity: 0.02
+

@@ -124,6 +124,19 @@ public static class VoxelMeshBuilder
                     byte id = chunk.GetBlock(lx, ly, lz);
                     if (id == 0) continue;   // air — skip
 
+                    // Debug: ore-only mode — skip non-ore blocks for visualization
+                    if (settings.debugOresOnly)
+                    {
+                        bool isOre = false;
+                        if (settings.debugOreBlockIds != null && settings.debugOreBlockIds.Length > 0)
+                        {
+                            for (int oi = 0; oi < settings.debugOreBlockIds.Length; oi++)
+                                if (id == settings.debugOreBlockIds[oi]) { isOre = true; break; }
+                        }
+                        else { isOre = id >= 11; }
+                        if (!isOre) continue;
+                    }
+
                     VoxelBlockType blockDef = registry.GetBlock(id);
                     if (blockDef == null || !blockDef.isSolid) continue;
 

@@ -8,6 +8,11 @@ using UnityEngine;
 //  Used by OverworldGenerator for continentalness / erosion / temperature /
 //  humidity — each gets its own instance so they can be tuned independently
 //  in the Inspector, instead of one noise curve driving everything.
+//
+//  DOMAIN WARPING (Phase 2 addition)
+//  If domainWarpAmplitude > 0, the sample point is pre-displaced by a second
+//  Perlin noise before the fBm loop runs. This swirls biome borders and adds
+//  natural-looking wrinkles to terrain transitions — no new packages needed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 [System.Serializable]
@@ -29,24 +34,52 @@ public class NoiseLayerConfig
              "point, so different layers don't sample identical noise at identical coords.")]
     public float seedOffsetMultiplier = 1f;
 
-    /// <summary>Samples this layer at world (wx, wz). Returns a normalised [0..1] value.</summary>
-    public float Sample(int wx, int wz, int seed)
+    // ── Domain warping (Phase 2) ──────────────────────────────────────────────
+
+    [Header("Domain Warp (optional)")]
+    [Tooltip("If > 0, domain-warps the sample coordinates by this amplitude (in blocks) " +
+             "before the fBm loop. Creates swirling biome borders and natural terrain wrinkles.")]
+    public float domainWarpAmplitude = 0f;
+
+    [Tooltip("Scale of the domain warp noise. Larger = wider, smoother swirls.")]
+    public float domainWarpScale = 200f;
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Samples this layer at world (wx, wz). Returns a normalised [0..1] value.
+    /// Thread-safe, deterministic.</summary>
+    public float Sample(int wx, int wz, int seed) => SampleF(wx, wz, seed);
+
+    /// <summary>Samples this layer at float world coordinates (wx, wz). Allows sub-block
+    /// resolution sampling from editor tooling. Thread-safe, deterministic.</summary>
+    public float SampleF(float wx, float wz, int seed)
     {
         // BUG FIX 1 — "seed 0 = blocky terrain":
-        //   The old formula was: offset = seed * 0.1f * seedOffsetMultiplier
-        //   When seed=0 triggers Random.Range in VoxelWorldManager, the result can be
-        //   a very large int (e.g. 1,847,234,123). Multiplied by 0.1f that's ~184M.
-        //   Adding wx (max ~1000 blocks) to 184M is meaningless in float32 precision —
-        //   all X values look identical to the noise function → flat uniform terrain.
-        //   Fix: constrain the offset to a reasonable range with modulo.
+        //   Constrain offset to a reasonable range with modulo so large seeds
+        //   don't exhaust float32 precision when added to world coords.
         //
         // BUG FIX 2 — "mirrored world":
         //   Unity's Mathf.PerlinNoise mirrors at 0: PerlinNoise(-x, z) == PerlinNoise(x, z).
-        //   Blocks on the negative side of the world produced a mirror image of positive blocks.
-        //   Fix: add a large base offset (10000) so sample coords are always positive,
-        //   and use different primes for X and Z so axes don't share the same symmetry point.
+        //   Add a large base offset (10000) so sample coords are always positive,
+        //   and use different primes for X and Z so axes don't share the same symmetry.
         float offsetX = 10000f + (seed * 127.1f * seedOffsetMultiplier) % 9999f;
         float offsetZ = 10000f + (seed * 311.7f * seedOffsetMultiplier) % 9999f;
+
+        float sx = wx + offsetX;
+        float sz = wz + offsetZ;
+
+        // Domain warp — displace sample point by a low-frequency Perlin before fBm
+        if (domainWarpAmplitude > 0f)
+        {
+            // Use two orthogonal primes to keep the two warp directions independent
+            float warpSeed1 = offsetX + 3571f;
+            float warpSeed2 = offsetZ + 6271f;
+            float warpX = Mathf.PerlinNoise(sx / domainWarpScale, sz / domainWarpScale + warpSeed1);
+            float warpZ = Mathf.PerlinNoise(sx / domainWarpScale + warpSeed2, sz / domainWarpScale);
+            // Remap [0..1] → [−0.5..0.5] then scale to amplitude
+            sx += (warpX - 0.5f) * domainWarpAmplitude * 2f;
+            sz += (warpZ - 0.5f) * domainWarpAmplitude * 2f;
+        }
 
         float amplitude = 1f;
         float frequency = 1f;
@@ -55,8 +88,8 @@ public class NoiseLayerConfig
 
         for (int o = 0; o < octaves; o++)
         {
-            float sampleX = (wx + offsetX) / scale * frequency;
-            float sampleZ = (wz + offsetZ) / scale * frequency;
+            float sampleX = sx / scale * frequency;
+            float sampleZ = sz / scale * frequency;
 
             value    += Mathf.PerlinNoise(sampleX, sampleZ) * amplitude;
             maxValue += amplitude;

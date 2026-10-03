@@ -10,7 +10,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fd0936cfe6ec8b14e83b7188eb2f4243, type: 3}
-  m_Name: OverworldGenerator
+  m_Name: OverworldGenerator 1
   m_EditorClassIdentifier: Assembly-CSharp::OverworldGenerator
   biomeRegistry: {fileID: 11400000, guid: e73e10535906d614c896c8430abd91a7, type: 2}
   climate:
