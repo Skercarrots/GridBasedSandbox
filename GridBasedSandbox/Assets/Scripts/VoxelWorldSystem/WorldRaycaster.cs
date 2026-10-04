@@ -70,6 +70,7 @@ public class WorldRaycaster : MonoBehaviour
     public PlacedItem HoveredEntity =>
         HasHit ? Collider.GetComponentInParent<PlacedItem>() : null;
 
+    public Camera PlayerCamera => playerCamera;
     public void SetPlayerCamera(Camera cam) => playerCamera = cam;
 
     private void Awake() => Instance = this;

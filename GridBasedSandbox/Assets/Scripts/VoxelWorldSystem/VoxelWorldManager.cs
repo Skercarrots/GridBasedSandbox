@@ -89,6 +89,15 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     // whether it's triggered by Awake() or by an early GetSpawnPosition() call.
     private bool _initialized = false;
 
+    // ── Public Accessors ──────────────────────────────────────────────────────
+    public VoxelWorldSettings Settings => settings;
+    public WorldGenerator WorldGenerator => worldGenerator;
+    public Transform PlayerTransform => playerTransform;
+    public int Seed => _seed;
+    public int ActiveChunkCount => _activeChunks.Count;
+    public int CachedChunkCount => _chunkDataCache.Count;
+    public int RebuildQueueCount => _rebuildQueue.Count;
+
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
     private void Awake()

@@ -3,6 +3,7 @@ using UnityEngine;
 public class PlacedItem : MonoBehaviour
 {
     [SerializeField] private ItemData itemData;
+    public ItemData ItemData => itemData;
     public bool IsInteractable => GetComponent<IInteractable>() != null;
 
     private DebugLabel debugLabel;

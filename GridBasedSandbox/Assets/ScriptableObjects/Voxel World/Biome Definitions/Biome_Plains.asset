@@ -17,12 +17,12 @@ MonoBehaviour:
   maxTemperature: 0.7
   minHumidity: 0.3
   maxHumidity: 0.7
-  minContinentalness: 0.3
+  minContinentalness: 0.26
   maxContinentalness: 0.7
-  minErosion: 0.5
+  minErosion: 0.4
   maxErosion: 1
   minWeirdness: 0
-  maxWeirdness: 0.4
+  maxWeirdness: 0.5
   surfaceBlock: {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
   subsurfaceBlock: {fileID: 11400000, guid: ee2330afc47c3334fa802db293b98726, type: 2}
   subsurfaceDepth: 3
@@ -37,26 +37,53 @@ MonoBehaviour:
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.3
-      inSlope: 0
-      outSlope: 0.2
+      value: 0.18
+      inSlope: 0.28
+      outSlope: 0.28
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.26
+      value: 0.255
+      inSlope: 0.38
+      outSlope: 0.38
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.35
+      value: 0.29
+      inSlope: 0.35
+      outSlope: 0.35
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 0.5
+      value: 0.34
+      inSlope: 0.36
+      outSlope: 0.36
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.7
       value: 0.42
-      inSlope: 0.18
-      outSlope: 0.18
+      inSlope: 0.35
+      outSlope: 0.35
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.55
-      inSlope: 0.15
+      value: 0.5
+      inSlope: 0.25
       outSlope: 0
       tangentMode: 0
       weightedMode: 0

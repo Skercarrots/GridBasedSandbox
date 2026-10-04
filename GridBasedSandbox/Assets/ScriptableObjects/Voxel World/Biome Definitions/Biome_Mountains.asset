@@ -37,26 +37,44 @@ MonoBehaviour:
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.35
-      inSlope: 0
-      outSlope: 0.5
+      value: 0.25
+      inSlope: 0.25
+      outSlope: 0.25
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.5
-      value: 0.62
+      time: 0.55
+      value: 0.38
       inSlope: 0.55
-      outSlope: 0.7
+      outSlope: 0.55
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.7
+      value: 0.48
+      inSlope: 0.8
+      outSlope: 0.8
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.85
+      value: 0.65
+      inSlope: 1
+      outSlope: 1
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.95
-      inSlope: 0.6
+      value: 0.8
+      inSlope: 0.7
       outSlope: 0
       tangentMode: 0
       weightedMode: 0
@@ -66,7 +84,7 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   heightMultiplier: 1
-  ridgeStrength: 0.7
+  ridgeStrength: 0.3
   features:
   - feature: {fileID: 11400000, guid: e3a1a2a3a4a5a6a7b1b2b3b4b5b6b7b3, type: 2}
     weight: 1

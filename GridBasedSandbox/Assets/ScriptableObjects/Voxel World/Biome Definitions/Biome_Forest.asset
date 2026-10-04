@@ -17,7 +17,7 @@ MonoBehaviour:
   maxTemperature: 0.7
   minHumidity: 0.5
   maxHumidity: 1
-  minContinentalness: 0.3
+  minContinentalness: 0.26
   maxContinentalness: 0.7
   minErosion: 0.3
   maxErosion: 0.8
@@ -37,26 +37,53 @@ MonoBehaviour:
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.28
-      inSlope: 0
+      value: 0.18
+      inSlope: 0.3
       outSlope: 0.3
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
+      time: 0.26
+      value: 0.258
+      inSlope: 0.4
+      outSlope: 0.4
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.35
+      value: 0.31
+      inSlope: 0.4
+      outSlope: 0.4
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
       time: 0.5
+      value: 0.37
+      inSlope: 0.36
+      outSlope: 0.36
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.7
       value: 0.44
-      inSlope: 0.22
-      outSlope: 0.22
+      inSlope: 0.35
+      outSlope: 0.35
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.6
-      inSlope: 0.25
+      value: 0.54
+      inSlope: 0.28
       outSlope: 0
       tangentMode: 0
       weightedMode: 0

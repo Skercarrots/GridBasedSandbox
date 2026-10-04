@@ -661,6 +661,23 @@ public class OverworldGenerator : WorldGenerator
     //  Surface sampler implementation (for StructurePlacer)
     // ═══════════════════════════════════════════════════════════════════════════
 
+    public ClimateConfig Climate => climate;
+    public BiomeRegistry BiomeRegistry => biomeRegistry;
+
+    /// <summary>Samples all 5 climate axes at world coordinates (wx, wz).</summary>
+    public ClimatePoint SampleClimate(int wx, int wz, int seed)
+    {
+        return climate != null ? climate.Sample(wx, wz, seed) : default;
+    }
+
+    /// <summary>Returns the BiomeDefinition matching climate at world coordinates (wx, wz).</summary>
+    public BiomeDefinition GetBiome(int wx, int wz, int seed)
+    {
+        if (climate == null || biomeRegistry == null) return null;
+        ClimatePoint cp = climate.Sample(wx, wz, seed);
+        return biomeRegistry.GetBiome(in cp);
+    }
+
     /// <summary>Returns the computed surface Y at world (wx, wz) for structure placement.</summary>
     public int GetSurfaceY(int wx, int wz, int seed, VoxelWorldSettings settings)
     {
