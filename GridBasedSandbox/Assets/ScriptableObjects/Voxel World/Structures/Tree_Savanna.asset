@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 93a4b5c6d7e8f90a1b2c3d4e5f607182, type: 3}
+  m_Name: Tree_Savanna
+  m_EditorClassIdentifier: Assembly-CSharp::TreeRecipe
+  trunkMinHeight: 4
+  trunkMaxHeight: 6
+  trunkThickness: 1
+  trunkTaper: 0
+  trunkLean: 0.2
+  branchCount: 3
+  branchAngle: 55
+  branchLength: 3
+  branchDepth: 1
+  rootFlareRadius: 1
+  canopyShape: 3
+  canopyRadiusX: 4
+  canopyRadiusY: 2
+  canopyRadiusZ: 4
+  leafDensityErosion: 0.15
+  logBlock: {fileID: 11400000, guid: b2b64cafb311f524abd8379d68d988a7, type: 2}
+  leafBlock: {fileID: 11400000, guid: e12c314f7d2e9e04cb245f844e3f5bfe, type: 2}

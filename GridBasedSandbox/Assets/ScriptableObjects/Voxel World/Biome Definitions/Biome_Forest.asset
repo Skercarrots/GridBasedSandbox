@@ -67,7 +67,11 @@ MonoBehaviour:
     m_RotationOrder: 4
   heightMultiplier: 1
   ridgeStrength: 0.05
-  features: []
+  features:
+  - feature: {fileID: 11400000, guid: e1a1a2a3a4a5a6a7b1b2b3b4b5b6b7b1, type: 2}
+    weight: 1
+  - feature: {fileID: 11400000, guid: e2a1a2a3a4a5a6a7b1b2b3b4b5b6b7b2, type: 2}
+    weight: 1
   decorationPrefabs: []
   decorationDensity: 0.02
 

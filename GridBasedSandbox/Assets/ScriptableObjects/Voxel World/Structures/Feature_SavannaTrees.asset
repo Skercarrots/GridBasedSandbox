@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94a5b6c7d8e9fa0b1c2d3e4f50617283, type: 3}
+  m_Name: Feature_SavannaTrees
+  m_EditorClassIdentifier: Assembly-CSharp::WorldFeature
+  recipe: {fileID: 11400000, guid: f4a1a2a3a4a5a6a7b1b2b3b4b5b6b7b4, type: 2}
+  bakedTemplate: {fileID: 0}
+  allowedBiomes:
+  - {fileID: 11400000, guid: 18697533fb1f03643a993a8ccfc59873, type: 2}
+  - {fileID: 11400000, guid: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6, type: 2}
+  density: 0.6
+  minSpacing: 6
+  clusterNoise:
+    scale: 200
+    octaves: 2
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 4.1
+    domainWarpAmplitude: 0
+    domainWarpScale: 200
+  clusterThreshold: 0.45
+  allowedGroundBlocks:
+  - {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
+  - {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
+  - {fileID: 11400000, guid: ee2330afc47c3334fa802db293b98726, type: 2}
+  maxSlope: 0.5
+  minAltitude: -32
+  maxAltitude: 100
+  avoidWater: 1
+  requiredAirClearance: 4

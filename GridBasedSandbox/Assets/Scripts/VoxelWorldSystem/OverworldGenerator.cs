@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +71,13 @@ public class OverworldGenerator : WorldGenerator
              "deterministic placement pass after cave carving.")]
     [SerializeField] private OreDefinition[] ores;
 
+    // ── Structures & Features (Phase 4) ───────────────────────────────────────
+    [Header("Global Features (Phase 4)")]
+    [Tooltip("Features placed across the world regardless of biome (e.g. boulders, structures).")]
+    [SerializeField] private List<WorldFeature> globalFeatures = new();
+
+    private List<WorldFeature> _preparedFeatures;
+
     // ── Bedrock (Phase 1) ─────────────────────────────────────────────────────
     [Header("Bedrock")]
     [Tooltip("The block type used for the unbreakable bedrock layer at the bottom of the world.")]
@@ -109,6 +117,29 @@ public class OverworldGenerator : WorldGenerator
             foreach (var ore in ores)
                 ore?.BakeHeightDistribution();
         }
+
+        // Collect and cache all features from registered biomes + globalFeatures
+        var featureSet = new HashSet<WorldFeature>();
+        if (biomeRegistry != null && biomeRegistry.Biomes != null)
+        {
+            foreach (var b in biomeRegistry.Biomes)
+            {
+                if (b == null || b.features == null) continue;
+                foreach (var fe in b.features)
+                {
+                    if (fe != null && fe.feature != null)
+                        featureSet.Add(fe.feature);
+                }
+            }
+        }
+        if (globalFeatures != null)
+        {
+            foreach (var gf in globalFeatures)
+            {
+                if (gf != null) featureSet.Add(gf);
+            }
+        }
+        _preparedFeatures = new List<WorldFeature>(featureSet);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -189,6 +220,13 @@ public class OverworldGenerator : WorldGenerator
         if (ores != null && ores.Length > 0)
         {
             PlaceOres(data, settings, seed, bedrockId, surfaceHeights);
+        }
+
+        // ── Pass 4: Structure placement (Phase 4) ─────────────────────────────
+        if (_preparedFeatures != null && _preparedFeatures.Count > 0)
+        {
+            var sampler = new SurfaceSampler(this, settings, seed);
+            StructurePlacer.PlaceFeatures(data, settings, seed, _preparedFeatures, sampler, bedrockId);
         }
 
         data.RecomputeSectionOccupancy();
@@ -620,7 +658,7 @@ public class OverworldGenerator : WorldGenerator
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Public surface sampler (for Phase 4 structure placement)
+    //  Surface sampler implementation (for StructurePlacer)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>Returns the computed surface Y at world (wx, wz) for structure placement.</summary>
@@ -630,5 +668,115 @@ public class OverworldGenerator : WorldGenerator
         BiomeDefinition biome = biomeRegistry.GetBiome(in cp);
         float           h     = ComputeShapedHeight(wx, wz, in cp, biome, seed, settings);
         return Mathf.Clamp(Mathf.RoundToInt(h), settings.minHeight, settings.maxHeight);
+    }
+
+    /// <summary>Internal surface query method used by SurfaceSampler. Thread-safe.</summary>
+    public bool TryGetSurfaceInternal(VoxelWorldSettings settings, int seed, int wx, int wz,
+                                      out int surfaceY, out byte surfaceBlockId, out float slope)
+    {
+        ClimatePoint cp = climate.Sample(wx, wz, seed);
+        BlendResult blend = ComputeBlendedHeight(wx, wz, cp, seed, settings);
+        surfaceY = blend.SurfaceY;
+        slope = blend.SlopeGradient;
+        BiomeDefinition biome = blend.Biome;
+
+        // In chaos terrain, scan downward from top ceiling to find the first solid block
+        if (enableChaos && chaos.maskThreshold < 1f)
+        {
+            float maskOx = 10000f + (seed * 127.1f + chaos.maskSeedOffset) % 9999f;
+            float maskOz = 10000f + (seed * 311.7f + chaos.maskSeedOffset) % 9999f;
+            float mask = Mathf.PerlinNoise((wx + maskOx) / chaos.maskScale, (wz + maskOz) / chaos.maskScale);
+            if (mask > chaos.maskThreshold)
+            {
+                int ceilingY = surfaceY + 30;
+                int deepCutoff = surfaceY - 40;
+                for (int wy = ceilingY; wy >= deepCutoff; wy--)
+                {
+                    float heightAboveSurface = wy - surfaceY;
+                    float gradient = -heightAboveSurface * chaos.densityGradient;
+                    float noise3D = VoxelNoise.Sample3DFbm(wx, wy, wz, chaos.densityScale,
+                                                          chaos.densityOctaves, chaos.densityPersistence,
+                                                          2f, seed + 777777);
+                    float density = gradient + (noise3D - 0.5f) * chaos.densityAmplitude;
+                    if (density > 0f)
+                    {
+                        surfaceY = wy;
+                        surfaceBlockId = ResolveSurfaceBlock(wy, surfaceY, biome, settings, 0f);
+                        slope = 0f;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        surfaceBlockId = ResolveSurfaceBlock(surfaceY, surfaceY, biome, settings, slope);
+        return true;
+    }
+
+    /// <summary>Checks whether a vertical column has clear air. Thread-safe.</summary>
+    public bool IsAirColumnInternal(VoxelWorldSettings settings, int seed, int wx, int startY, int wz, int height)
+    {
+        int endY = startY + height - 1;
+        int baseSurface = GetSurfaceY(wx, wz, seed, settings);
+        if (startY <= baseSurface) return false;
+        if (startY <= settings.seaLevel) return false;
+
+        if (enableChaos && chaos.maskThreshold < 1f)
+        {
+            float maskOx = 10000f + (seed * 127.1f + chaos.maskSeedOffset) % 9999f;
+            float maskOz = 10000f + (seed * 311.7f + chaos.maskSeedOffset) % 9999f;
+            float mask = Mathf.PerlinNoise((wx + maskOx) / chaos.maskScale, (wz + maskOz) / chaos.maskScale);
+            if (mask > chaos.maskThreshold)
+            {
+                for (int wy = startY; wy <= endY; wy++)
+                {
+                    float heightAbove = wy - baseSurface;
+                    float gradient = -heightAbove * chaos.densityGradient;
+                    float noise3D = VoxelNoise.Sample3DFbm(wx, wy, wz, chaos.densityScale,
+                                                          chaos.densityOctaves, chaos.densityPersistence,
+                                                          2f, seed + 777777);
+                    float density = gradient + (noise3D - 0.5f) * chaos.densityAmplitude;
+                    if (density > 0f) return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Nested ISurfaceSampler implementation passed to StructurePlacer.</summary>
+    private class SurfaceSampler : ISurfaceSampler
+    {
+        private readonly OverworldGenerator _gen;
+        private readonly VoxelWorldSettings _settings;
+        private readonly int _seed;
+
+        public SurfaceSampler(OverworldGenerator gen, VoxelWorldSettings settings, int seed)
+        {
+            _gen = gen;
+            _settings = settings;
+            _seed = seed;
+        }
+
+        public bool TryGetSurface(int wx, int wz, out int surfaceY, out byte surfaceBlockId)
+        {
+            return _gen.TryGetSurfaceInternal(_settings, _seed, wx, wz, out surfaceY, out surfaceBlockId, out _);
+        }
+
+        public bool TryGetSurface(int wx, int wz, out int surfaceY, out byte surfaceBlockId, out float slope)
+        {
+            return _gen.TryGetSurfaceInternal(_settings, _seed, wx, wz, out surfaceY, out surfaceBlockId, out slope);
+        }
+
+        public bool IsAirColumn(int wx, int startY, int wz, int height)
+        {
+            return _gen.IsAirColumnInternal(_settings, _seed, wx, startY, wz, height);
+        }
+
+        public BiomeDefinition GetBiome(int wx, int wz)
+        {
+            ClimatePoint cp = _gen.climate.Sample(wx, wz, _seed);
+            return _gen.biomeRegistry.GetBiome(in cp);
+        }
     }
 }

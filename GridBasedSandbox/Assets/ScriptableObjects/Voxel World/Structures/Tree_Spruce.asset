@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 93a4b5c6d7e8f90a1b2c3d4e5f607182, type: 3}
+  m_Name: Tree_Spruce
+  m_EditorClassIdentifier: Assembly-CSharp::TreeRecipe
+  trunkMinHeight: 7
+  trunkMaxHeight: 16
+  trunkThickness: 1
+  trunkTaper: 0
+  trunkLean: 0
+  branchCount: 0
+  branchAngle: 25
+  branchLength: 1
+  branchDepth: 0
+  rootFlareRadius: 0
+  canopyShape: 1
+  canopyRadiusX: 3
+  canopyRadiusY: 4
+  canopyRadiusZ: 3
+  leafDensityErosion: 0.1
+  logBlock: {fileID: 11400000, guid: b2b64cafb311f524abd8379d68d988a7, type: 2}
+  leafBlock: {fileID: 11400000, guid: e12c314f7d2e9e04cb245f844e3f5bfe, type: 2}

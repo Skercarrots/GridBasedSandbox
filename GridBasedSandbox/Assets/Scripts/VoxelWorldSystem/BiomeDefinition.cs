@@ -195,16 +195,14 @@ public class BiomeDefinition : ScriptableObject
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  WorldFeatureEntry — Placeholder struct for Phase 4 (Structure Framework).
-//  Defined here so BiomeDefinition compiles cleanly in Phase 2 even without
-//  the full Phase 4 WorldFeature class present.
+//  WorldFeatureEntry — Links a WorldFeature to this biome with relative weight.
 // ─────────────────────────────────────────────────────────────────────────────
 
 [System.Serializable]
 public class WorldFeatureEntry
 {
-    [Tooltip("Feature asset — assigned in Phase 4 once WorldFeature SO is created.")]
-    public ScriptableObject feature;  // will become WorldFeature in Phase 4
+    [Tooltip("Feature asset defining the structure and placement parameters.")]
+    public WorldFeature feature;
 
     [Tooltip("Weight relative to other features in this biome.")]
     [Range(0f, 1f)] public float weight = 1f;

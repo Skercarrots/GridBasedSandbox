@@ -1,0 +1,37 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94a5b6c7d8e9fa0b1c2d3e4f50617283, type: 3}
+  m_Name: Feature_FantasyTrees
+  m_EditorClassIdentifier: Assembly-CSharp::WorldFeature
+  recipe: {fileID: 11400000, guid: f5a1a2a3a4a5a6a7b1b2b3b4b5b6b7b5, type: 2}
+  bakedTemplate: {fileID: 0}
+  allowedBiomes:
+  - {fileID: 11400000, guid: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0, type: 2}
+  density: 0.8
+  minSpacing: 8
+  clusterNoise:
+    scale: 150
+    octaves: 2
+    persistence: 0.5
+    lacunarity: 2
+    seedOffsetMultiplier: 5.5
+    domainWarpAmplitude: 0
+    domainWarpScale: 200
+  clusterThreshold: 0.35
+  allowedGroundBlocks:
+  - {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
+  - {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
+  maxSlope: 1
+  minAltitude: -10
+  maxAltitude: 200
+  avoidWater: 1
+  requiredAirClearance: 8

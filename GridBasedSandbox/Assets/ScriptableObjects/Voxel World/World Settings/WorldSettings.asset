@@ -20,7 +20,10 @@ MonoBehaviour:
   minHeight: -64
   maxHeight: 192
   viewDistanceInChunks: 16
-  maxChunkBuildsPerFrame: 3
-  seed: 10
+  maxChunkBuildsPerFrame: 1
+  seed: 15
+  maxConcurrentChunkGenerations: 0
   atlasSize: 4
   chunkMaterial: {fileID: 2100000, guid: 92a8bfdf16072aa4f81477ace86f7829, type: 2}
+  debugOresOnly: 0
+  debugOreBlockIds: 0b0c0d0e
