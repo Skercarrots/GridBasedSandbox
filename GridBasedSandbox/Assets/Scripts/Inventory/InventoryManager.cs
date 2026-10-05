@@ -16,6 +16,9 @@ public class InventoryManager : MonoBehaviour
     private int currentSelectedSlot = 0;
     [SerializeField] private ItemData selectedItem;
     private List<InventorySlot> slots;
+
+    public int CurrentSelectedSlot => currentSelectedSlot;
+    public int SlotCount => slots != null ? slots.Count : inventorySize;
     
     /// <summary>
     /// Initializes the inventory slots and sets up the corresponding UI bar.

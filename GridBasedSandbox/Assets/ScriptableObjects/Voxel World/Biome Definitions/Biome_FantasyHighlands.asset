@@ -17,27 +17,37 @@ MonoBehaviour:
   maxTemperature: 1
   minHumidity: 0
   maxHumidity: 1
-  minContinentalness: 0.4
-  maxContinentalness: 0.8
+  minContinentalness: 0.5
+  maxContinentalness: 0.88
   minErosion: 0
-  maxErosion: 0.5
+  maxErosion: 0.65
   minWeirdness: 0.6
   maxWeirdness: 1
   surfaceBlock: {fileID: 11400000, guid: c734aecf53a7a9648afd88a5bf40c958, type: 2}
   subsurfaceBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
   subsurfaceDepth: 2
   steepSlopeBlock: {fileID: 11400000, guid: e5397d352de3e3e42951caafc5218b55, type: 2}
-  slopeSteepnessThreshold: 0.9
+  slopeSteepnessThreshold: 0.85
   snowlineBlock: {fileID: 11400000, guid: 33fb1e6cc9e5b4946890b62f30f4ff3a, type: 2}
-  snowlineY: 90
+  snowlineY: 88
   beachBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
   beachDepthBelowSeaLevel: 2
+  beachHeightAboveSeaLevel: 2
   heightCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.22
+      value: 0.3
+      inSlope: 0.1
+      outSlope: 0.1
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.45
+      value: 0.38
       inSlope: 0.25
       outSlope: 0.25
       tangentMode: 0
@@ -45,8 +55,26 @@ MonoBehaviour:
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.4
-      value: 0.33
+      time: 0.6
+      value: 0.48
+      inSlope: 0.45
+      outSlope: 0.45
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.72
+      value: 0.62
+      inSlope: 0.55
+      outSlope: 0.55
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.85
+      value: 0.72
       inSlope: 0.4
       outSlope: 0.4
       tangentMode: 0
@@ -54,27 +82,9 @@ MonoBehaviour:
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.55
-      value: 0.44
-      inSlope: 0.6
-      outSlope: 0.6
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.75
-      value: 0.6
-      inSlope: 0.7
-      outSlope: 0.7
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
       time: 1
-      value: 0.75
-      inSlope: 0.5
+      value: 0.78
+      inSlope: 0.2
       outSlope: 0
       tangentMode: 0
       weightedMode: 0
@@ -84,7 +94,7 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   heightMultiplier: 1
-  ridgeStrength: 0.25
+  ridgeStrength: 0.45
   features:
   - feature: {fileID: 11400000, guid: e5a1a2a3a4a5a6a7b1b2b3b4b5b6b7b5, type: 2}
     weight: 1

@@ -16,60 +16,60 @@ MonoBehaviour:
   climate:
     worldScale: 1
     continentalness:
-      scale: 400
+      scale: 280
       octaves: 4
       persistence: 0.5
       lacunarity: 2
       seedOffsetMultiplier: 1
-      domainWarpAmplitude: 0
-      domainWarpScale: 200
+      domainWarpAmplitude: 40
+      domainWarpScale: 140
     erosion:
-      scale: 250
+      scale: 180
       octaves: 3
       persistence: 0.5
       lacunarity: 2
       seedOffsetMultiplier: 3.3
-      domainWarpAmplitude: 0
-      domainWarpScale: 200
+      domainWarpAmplitude: 30
+      domainWarpScale: 120
     temperature:
-      scale: 600
-      octaves: 2
+      scale: 360
+      octaves: 3
       persistence: 0.5
       lacunarity: 2
       seedOffsetMultiplier: 5.1
-      domainWarpAmplitude: 0
-      domainWarpScale: 200
+      domainWarpAmplitude: 35
+      domainWarpScale: 150
     humidity:
-      scale: 600
-      octaves: 2
+      scale: 360
+      octaves: 3
       persistence: 0.5
       lacunarity: 2
       seedOffsetMultiplier: 7.9
-      domainWarpAmplitude: 0
-      domainWarpScale: 200
+      domainWarpAmplitude: 35
+      domainWarpScale: 150
     weirdness:
-      scale: 350
+      scale: 240
       octaves: 3
       persistence: 0.5
       lacunarity: 2
       seedOffsetMultiplier: 11.3
-      domainWarpAmplitude: 0
-      domainWarpScale: 200
-  blendRadius: 16
+      domainWarpAmplitude: 25
+      domainWarpScale: 110
+  blendRadius: 8
   chaos:
-    maskScale: 800
+    maskScale: 320
     maskThreshold: 0.65
     maskSeedOffset: 31337
-    densityScale: 30
+    densityScale: 32
     densityOctaves: 3
     densityPersistence: 0.5
-    densityAmplitude: 0.8
-    densityGradient: 0.04
+    densityAmplitude: 0.9
+    densityGradient: 0.035
     coarseGridStep: 4
   enableChaos: 1
-  ridgeScale: 120
-  ridgeOctaves: 3
-  ridgeWeirdnessThreshold: 0.4
+  ridgeScale: 80
+  ridgeOctaves: 4
+  ridgeWeirdnessThreshold: 0.35
   caveConfig: {fileID: 11400000, guid: befce97a852610e4782e6f6998bb999f, type: 2}
   ores:
   - {fileID: 11400000, guid: 530638b2785dd774c9993103522cb567, type: 2}
@@ -83,34 +83,34 @@ MonoBehaviour:
   caveThreshold: 0.62
   caveMinDepthBelowSurface: 4
   continentalness:
-    scale: 300
+    scale: 280
     octaves: 4
     persistence: 0.5
     lacunarity: 2
     seedOffsetMultiplier: 1
-    domainWarpAmplitude: 0
-    domainWarpScale: 200
+    domainWarpAmplitude: 40
+    domainWarpScale: 140
   erosion:
     scale: 180
     octaves: 3
     persistence: 0.5
     lacunarity: 2
     seedOffsetMultiplier: 3.3
-    domainWarpAmplitude: 0
-    domainWarpScale: 200
+    domainWarpAmplitude: 30
+    domainWarpScale: 120
   temperature:
-    scale: 500
-    octaves: 2
+    scale: 360
+    octaves: 3
     persistence: 0.5
     lacunarity: 2
     seedOffsetMultiplier: 5.1
-    domainWarpAmplitude: 0
-    domainWarpScale: 200
+    domainWarpAmplitude: 35
+    domainWarpScale: 150
   humidity:
-    scale: 500
-    octaves: 2
+    scale: 360
+    octaves: 3
     persistence: 0.5
     lacunarity: 2
     seedOffsetMultiplier: 7.9
-    domainWarpAmplitude: 0
-    domainWarpScale: 200
+    domainWarpAmplitude: 35
+    domainWarpScale: 150

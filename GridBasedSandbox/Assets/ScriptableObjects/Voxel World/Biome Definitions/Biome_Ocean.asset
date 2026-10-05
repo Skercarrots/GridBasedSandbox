@@ -18,7 +18,7 @@ MonoBehaviour:
   minHumidity: 0
   maxHumidity: 1
   minContinentalness: 0
-  maxContinentalness: 0.26
+  maxContinentalness: 0.32
   minErosion: 0
   maxErosion: 1
   minWeirdness: 0
@@ -27,11 +27,12 @@ MonoBehaviour:
   subsurfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
   subsurfaceDepth: 4
   steepSlopeBlock: {fileID: 0}
-  slopeSteepnessThreshold: 1.2
+  slopeSteepnessThreshold: 1.863
   snowlineBlock: {fileID: 0}
   snowlineY: 80
   beachBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
-  beachDepthBelowSeaLevel: 4
+  beachDepthBelowSeaLevel: 5
+  beachHeightAboveSeaLevel: 2
   heightCurve:
     serializedVersion: 2
     m_Curve:
@@ -45,36 +46,54 @@ MonoBehaviour:
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.18
-      value: 0.16
-      inSlope: 0.7
-      outSlope: 0.7
+      time: 0.12
+      value: 0.13
+      inSlope: 0.5
+      outSlope: 0.5
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.26
-      value: 0.255
-      inSlope: 0.8
-      outSlope: 0.8
+      time: 0.22
+      value: 0.19
+      inSlope: 0.6
+      outSlope: 0.6
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.5
-      value: 0.33
-      inSlope: 0.3
-      outSlope: 0.3
+      time: 0.28
+      value: 0.23
+      inSlope: 0.5
+      outSlope: 0.5
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.32
+      value: 0.25
+      inSlope: 0.35
+      outSlope: 0.35
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.45
+      value: 0.256
+      inSlope: 0.03
+      outSlope: 0.03
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.42
-      inSlope: 0.15
+      value: 0.26
+      inSlope: 0
       outSlope: 0
       tangentMode: 0
       weightedMode: 0
@@ -88,4 +107,3 @@ MonoBehaviour:
   features: []
   decorationPrefabs: []
   decorationDensity: 0
-

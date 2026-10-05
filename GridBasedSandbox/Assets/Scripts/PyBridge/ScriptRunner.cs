@@ -23,11 +23,20 @@ public class ScriptRunner : MonoBehaviour
     [Header("Debug")]
     [SerializeField] private bool verbose = true; // toggle in Inspector
 
+    public static event System.Action<ScriptRunner, string, LogType> OnAnyPythonOutput;
+    public event System.Action<string, LogType> OnOutput;
+
+    private readonly ConcurrentQueue<(string message, LogType type)> _outputQueue = new();
     private ConcurrentQueue<System.Action> _actionQueue = new();
     private ManualResetEventSlim _stepDone = new(false);
     private Thread _pythonThread;
     private float  _scriptStartTime;
     private bool   _scriptRunning;
+
+    public bool IsScriptRunning => _scriptRunning;
+    public float ElapsedScriptTime => _scriptRunning ? Time.time - _scriptStartTime : 0f;
+    public string ActiveDeviceName => (device is IScriptableDevice sd) ? sd.DeviceName : (device != null ? device.gameObject.name : "None");
+    public string ActiveDeviceVarName => (device is IScriptableDevice sd) ? sd.VariableName : "device";
 
     private const string SANDBOX_SETUP = @"
 import sys
@@ -84,9 +93,17 @@ del sys, _builtins, _allowed
                 var scope = engine.CreateScope();
 
                 var outputStream = new OutputCaptureStream(
-                    text => Debug.Log($"[Python] {text}"));
+                    text =>
+                    {
+                        Debug.Log($"[Python] {text}");
+                        _outputQueue.Enqueue((text, LogType.Log));
+                    });
                 var errorStream = new OutputCaptureStream(
-                    text => Debug.LogError($"[Python Error] {text}"));
+                    text =>
+                    {
+                        Debug.LogError($"[Python Error] {text}");
+                        _outputQueue.Enqueue((text, LogType.Error));
+                    });
                 engine.Runtime.IO.SetOutput(outputStream, System.Text.Encoding.UTF8);
                 engine.Runtime.IO.SetErrorOutput(errorStream, System.Text.Encoding.UTF8);
 
@@ -111,35 +128,40 @@ del sys, _builtins, _allowed
                 engine.Execute(Dedent(SANDBOX_SETUP), scope);
 
                 if (verbose) Debug.Log("[ScriptRunner] Sandbox applied — executing player code...");
+                _outputQueue.Enqueue(("[IDE] Sandbox ready — executing...", LogType.Log));
 
                 engine.Execute(Dedent(code), scope);
 
                 if (verbose) Debug.Log("[ScriptRunner] Script finished successfully.");
+                _outputQueue.Enqueue(("[IDE] Script completed successfully.", LogType.Log));
             }
             catch (ThreadAbortException) 
             {
                 if (verbose) Debug.Log("[ScriptRunner] Script stopped by user.");
+                _outputQueue.Enqueue(("[IDE] Script stopped by user.", LogType.Warning));
             }
             catch (System.Exception e)
             {
-                // Get full Python traceback with line numbers if possible
+                string errText;
                 if (engine != null)
                 {
                     try
                     {
                         var ops = engine.GetService<ExceptionOperations>();
-                        Debug.LogError($"[Python Error]\n{ops.FormatException(e)}");
+                        errText = ops.FormatException(e);
                     }
                     catch
                     {
-                        // Fallback if ExceptionOperations fails
-                        Debug.LogError($"[Python Error] {e.Message}\n{e.StackTrace}");
+                        errText = $"{e.Message}\n{e.StackTrace}";
                     }
                 }
                 else
                 {
-                    Debug.LogError($"[Python Error] {e.Message}");
+                    errText = e.Message;
                 }
+
+                Debug.LogError($"[Python Error]\n{errText}");
+                _outputQueue.Enqueue((errText, LogType.Error));
             }
             finally
             {
@@ -153,16 +175,28 @@ del sys, _builtins, _allowed
 
     public void StopScript()
     {
-        _pythonThread?.Abort();
-        _actionQueue.Clear();
-        _scriptRunning = false;
+        if (_scriptRunning)
+        {
+            _pythonThread?.Abort();
+            _actionQueue.Clear();
+            _scriptRunning = false;
+            _outputQueue.Enqueue(("[IDE] Script stopped.", LogType.Warning));
+        }
     }
 
     private void Update()
     {
+        // Drain Python log output to main thread events
+        while (_outputQueue.TryDequeue(out var log))
+        {
+            OnOutput?.Invoke(log.message, log.type);
+            OnAnyPythonOutput?.Invoke(this, log.message, log.type);
+        }
+
         if (_scriptRunning && scriptTimeout > 0f && Time.time - _scriptStartTime > scriptTimeout)
         {
             Debug.LogWarning($"[ScriptRunner] Script timed out after {scriptTimeout}s — stopped.");
+            _outputQueue.Enqueue(($"[IDE] Timed out after {scriptTimeout}s — stopped.", LogType.Warning));
             StopScript();
         }
 

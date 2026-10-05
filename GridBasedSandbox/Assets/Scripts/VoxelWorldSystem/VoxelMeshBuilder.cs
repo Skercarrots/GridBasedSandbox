@@ -104,10 +104,14 @@ public static class VoxelMeshBuilder
         var registry = settings.blockRegistry;
         float tileSize = settings.TileUVSize;
 
-        var vertices  = new List<Vector3>();
-        var triangles = new List<int>();
-        var uvs       = new List<Vector2>();
-        var colors    = new List<Color>();
+        var vertices       = new List<Vector3>();
+        var solidTriangles = new List<int>();
+        var waterTriangles = new List<int>();
+        var uvs            = new List<Vector2>();
+        var colors         = new List<Color>();
+
+        var colVertices  = new List<Vector3>();
+        var colTriangles = new List<int>();
 
         for (int lx = 0; lx < chunk.Width; lx++)
         for (int lz = 0; lz < chunk.Width; lz++)
@@ -138,12 +142,23 @@ public static class VoxelMeshBuilder
                     }
 
                     VoxelBlockType blockDef = registry.GetBlock(id);
-                    if (blockDef == null || !blockDef.isSolid) continue;
+                    if (blockDef == null) continue;
+
+                    bool isWater = blockDef.isTransparent;
 
                     var blockOrigin = new Vector3(lx, ly, lz);
                     Color vertColor = blockDef.IsPlaceholder
                         ? blockDef.ResolvedPlaceholderColor
                         : Color.white;
+
+                    // Water surface height (Minecraft-style, default 0.875 = 14/16 blocks tall)
+                    float waterHeight = settings != null ? settings.waterHeight : 0.875f;
+                    bool isWaterSurface = false;
+                    if (isWater)
+                    {
+                        byte aboveId = SampleNeighbour(chunk, sampler, lx, ly + 1, lz, settings);
+                        isWaterSurface = (aboveId != id);
+                    }
 
                     for (int face = 0; face < 6; face++)
                     {
@@ -153,18 +168,38 @@ public static class VoxelMeshBuilder
                         int nz = lz + dir.z;
 
                         byte neighbourId = SampleNeighbour(chunk, sampler, nx, ny, nz, settings);
+
+                        // Solid opaque neighbour culls the face
                         if (registry.IsSolid(neighbourId)) continue;
+
+                        // Transparent / fluid block culls faces against the same block (e.g. water against water)
+                        if (isWater && neighbourId == id) continue;
 
                         int baseVertex = vertices.Count;
 
                         for (int v = 0; v < 4; v++)
                         {
-                            vertices.Add(blockOrigin + FaceVertices[face, v]);
+                            Vector3 vertOffset = FaceVertices[face, v];
+                            // Lower the water surface if this is the topmost block of the water body
+                            if (isWater && isWaterSurface && vertOffset.y > 0.5f)
+                            {
+                                vertOffset.y = waterHeight;
+                            }
+
+                            vertices.Add(blockOrigin + vertOffset);
                             colors.Add(vertColor);
                         }
 
-                        foreach (int t in QuadTriangles)
-                            triangles.Add(baseVertex + t);
+                        if (isWater)
+                        {
+                            foreach (int t in QuadTriangles)
+                                waterTriangles.Add(baseVertex + t);
+                        }
+                        else
+                        {
+                            foreach (int t in QuadTriangles)
+                                solidTriangles.Add(baseVertex + t);
+                        }
 
                         Vector2Int tile = blockDef.GetTileForFace(face);
                         float uMin = tile.x       * tileSize + UV_INSET;
@@ -176,15 +211,37 @@ public static class VoxelMeshBuilder
                         {
                             Vector2 corner = FaceUVCorners[face, v];
                             float u = Mathf.Lerp(uMin, uMax, corner.x);
-                            float vCoord = Mathf.Lerp(vMin, vMax, corner.y);
+
+                            // For side water faces, crop the top UV proportionally to avoid stretching
+                            float cornerY = corner.y;
+                            if (isWater && isWaterSurface && face >= 2 && cornerY > 0.5f)
+                            {
+                                cornerY = waterHeight;
+                            }
+
+                            float vCoord = Mathf.Lerp(vMin, vMax, cornerY);
                             uvs.Add(new Vector2(u, vCoord));
+                        }
+
+                        // Only physically solid blocks receive mesh collision geometry
+                        if (blockDef.isSolid)
+                        {
+                            int baseColVertex = colVertices.Count;
+                            for (int v = 0; v < 4; v++)
+                                colVertices.Add(blockOrigin + FaceVertices[face, v]);
+
+                            foreach (int t in QuadTriangles)
+                                colTriangles.Add(baseColVertex + t);
                         }
                     }
                 }
             }
         }
 
-        return new MeshData(vertices, triangles, uvs, colors);
+        bool hasNonSolid = colVertices.Count != vertices.Count;
+        return new MeshData(vertices, solidTriangles, waterTriangles, uvs, colors,
+                            hasNonSolid ? colVertices : null,
+                            hasNonSolid ? colTriangles : null);
     }
 
     // ── Neighbour sampling helper ─────────────────────────────────────────────
@@ -217,33 +274,73 @@ public static class VoxelMeshBuilder
 public readonly struct MeshData
 {
     public readonly List<Vector3> Vertices;
-    public readonly List<int>     Triangles;
+    public readonly List<int>     SolidTriangles;
+    public readonly List<int>     WaterTriangles;
     public readonly List<Vector2> UVs;
     public readonly List<Color>   Colors;
 
-    public MeshData(List<Vector3> v, List<int> t, List<Vector2> u, List<Color> c = null)
+    public readonly List<Vector3> ColliderVertices;
+    public readonly List<int>     ColliderTriangles;
+
+    public MeshData(List<Vector3> v, List<int> solidTri, List<int> waterTri, List<Vector2> u, List<Color> c = null,
+                    List<Vector3> colV = null, List<int> colT = null)
     {
-        Vertices  = v;
-        Triangles = t;
-        UVs       = u;
-        Colors    = c;
+        Vertices          = v;
+        SolidTriangles    = solidTri;
+        WaterTriangles    = waterTri;
+        UVs               = u;
+        Colors            = c;
+        ColliderVertices  = colV;
+        ColliderTriangles = colT;
     }
 
     public bool IsEmpty => Vertices == null || Vertices.Count == 0;
+    public bool HasWater => WaterTriangles != null && WaterTriangles.Count > 0;
+    public bool HasSolid => SolidTriangles != null && SolidTriangles.Count > 0;
+    public bool HasSeparateCollider => ColliderVertices != null;
 
-    /// <summary>Pushes the data into a Unity Mesh. Call on the main thread only.</summary>
+    /// <summary>Pushes the data into a Unity Mesh with submeshes for solid and water.</summary>
     public void ApplyToMesh(Mesh mesh)
     {
         mesh.Clear();
         if (IsEmpty) return;
 
         mesh.SetVertices(Vertices);
-        mesh.SetTriangles(Triangles, 0);
         mesh.SetUVs(0, UVs);
         if (Colors != null && Colors.Count > 0)
             mesh.SetColors(Colors);
+
+        if (HasWater && HasSolid)
+        {
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(SolidTriangles, 0);
+            mesh.SetTriangles(WaterTriangles, 1);
+        }
+        else if (HasWater)
+        {
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(System.Array.Empty<int>(), 0);
+            mesh.SetTriangles(WaterTriangles, 1);
+        }
+        else
+        {
+            mesh.subMeshCount = 1;
+            mesh.SetTriangles(SolidTriangles, 0);
+        }
+
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
+    }
+
+    /// <summary>Pushes solid-only collider data into a Unity Mesh. Call on the main thread only.</summary>
+    public void ApplyToColliderMesh(Mesh colMesh)
+    {
+        colMesh.Clear();
+        if (ColliderVertices == null || ColliderVertices.Count == 0) return;
+
+        colMesh.SetVertices(ColliderVertices);
+        colMesh.SetTriangles(ColliderTriangles, 0);
+        colMesh.RecalculateBounds();
     }
 }
 

@@ -50,10 +50,9 @@ public class WorldRaycaster : MonoBehaviour
     [Tooltip("Layers this raycast can hit. Include BOTH your terrain/chunk layer and your placed-object layer, so this one raycast covers terrain aiming, decorative objects, and entities (robots, etc.) alike.")]
     [SerializeField] private LayerMask hittableLayers = ~0; // everything by default
 
-    // Small nudge off the hit surface — reused by anyone converting a hit
-    // point into a grid/voxel cell index, so a point sitting exactly on a
-    // cell boundary doesn't get floored to the wrong side.
-    public const float HitBias = 0.001f;
+    // Robust nudge off the hit surface — 0.2 units (20cm) ensures integer block coords
+    // are sampled firmly inside or outside the cell boundary without float rounding error.
+    public const float HitBias = 0.2f;
 
     public bool     HasHit    { get; private set; }
     public Vector3  Point     { get; private set; }
@@ -68,7 +67,7 @@ public class WorldRaycaster : MonoBehaviour
     /// <summary>The PlacedItem under the cursor right now, if any — a
     /// decorative object, a robot, a button, whatever was placed/marked.</summary>
     public PlacedItem HoveredEntity =>
-        HasHit ? Collider.GetComponentInParent<PlacedItem>() : null;
+        HasHit && Collider != null ? Collider.GetComponentInParent<PlacedItem>() : null;
 
     public Camera PlayerCamera => playerCamera;
     public void SetPlayerCamera(Camera cam) => playerCamera = cam;
@@ -79,12 +78,53 @@ public class WorldRaycaster : MonoBehaviour
     {
         if (playerCamera == null)
         {
-            HasHit = false;
-            return;
+            if (Camera.main != null)
+                playerCamera = Camera.main;
+            else
+            {
+                var playerObj = GameObject.FindWithTag("Player");
+                if (playerObj != null)
+                    playerCamera = playerObj.GetComponentInChildren<Camera>();
+            }
+
+            if (playerCamera == null)
+            {
+                HasHit = false;
+                Collider = null;
+                return;
+            }
         }
 
-        LastRay = playerCamera.ScreenPointToRay(Input.mousePosition);
-        HasHit = Physics.Raycast(LastRay, out RaycastHit hit, maxDistance, hittableLayers, QueryTriggerInteraction.Ignore);
+        // When cursor is locked (FPS gameplay), aim through screen center / crosshair.
+        // When cursor is unlocked (menus/IDE), aim through mouse cursor position.
+        LastRay = Cursor.lockState == CursorLockMode.Locked
+            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
+            : playerCamera.ScreenPointToRay(Input.mousePosition);
+
+        // Nudge ray start forward by 0.35m to avoid raycasting against the player's own capsule collider (radius 0.3m).
+        Vector3 rayOrigin = LastRay.origin + LastRay.direction * 0.35f;
+        float rayDist = maxDistance;
+
+        HasHit = Physics.Raycast(rayOrigin, LastRay.direction, out RaycastHit hit, rayDist, hittableLayers, QueryTriggerInteraction.Ignore);
+
+        // Ignore self-collision with the player character
+        if (HasHit && playerCamera.transform.root != null && hit.collider.transform.root == playerCamera.transform.root)
+        {
+            var hits = Physics.RaycastAll(rayOrigin, LastRay.direction, rayDist, hittableLayers, QueryTriggerInteraction.Ignore);
+            HasHit = false;
+            float bestDist = float.MaxValue;
+            RaycastHit bestHit = default;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                if (hits[i].collider.transform.root != playerCamera.transform.root && hits[i].distance < bestDist)
+                {
+                    bestDist = hits[i].distance;
+                    bestHit = hits[i];
+                    HasHit = true;
+                }
+            }
+            if (HasHit) hit = bestHit;
+        }
 
         if (HasHit)
         {

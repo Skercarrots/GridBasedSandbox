@@ -66,7 +66,8 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     private readonly Queue<VoxelChunk>  _pool        = new();
 
     // Rebuild queue — dirty chunks waiting for a remesh
-    private readonly Queue<Vector2Int>  _rebuildQueue = new();
+    private readonly Queue<Vector2Int>   _rebuildQueue   = new();
+    private readonly HashSet<Vector2Int> _queuedRebuilds = new();
 
     // Which chunk coords SHOULD currently be loaded — persisted across frames
     // (not just a local variable) so DrainGeneratedChunks knows, when a
@@ -186,8 +187,23 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         _desiredChunks = desired;
 
         // ── Request load/activate for chunks that are now in range ─────────
+        // Sort requests by distance to player so closest chunks generate and load first
+        var toRequest = new List<Vector2Int>();
         foreach (var coord in desired)
-            if (!_activeChunks.ContainsKey(coord)) RequestChunkLoad(coord);
+        {
+            if (!_activeChunks.ContainsKey(coord))
+                toRequest.Add(coord);
+        }
+
+        toRequest.Sort((a, b) =>
+        {
+            int distA = (a.x - centerChunkCoord.x) * (a.x - centerChunkCoord.x) + (a.y - centerChunkCoord.y) * (a.y - centerChunkCoord.y);
+            int distB = (b.x - centerChunkCoord.x) * (b.x - centerChunkCoord.x) + (b.y - centerChunkCoord.y) * (b.y - centerChunkCoord.y);
+            return distA.CompareTo(distB);
+        });
+
+        for (int i = 0; i < toRequest.Count; i++)
+            RequestChunkLoad(toRequest[i]);
     }
 
     // ── Chunk load / unload ───────────────────────────────────────────────────
@@ -216,12 +232,20 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         _activeChunks[coord] = chunk;
 
         EnqueueRebuild(coord);
+
+        // Rebuild active orthogonal neighbours so cross-chunk boundary faces
+        // (water surface/interior, cave borders, etc.) are properly culled against this new chunk.
+        EnqueueRebuildIfActive(coord + new Vector2Int(-1, 0));
+        EnqueueRebuildIfActive(coord + new Vector2Int( 1, 0));
+        EnqueueRebuildIfActive(coord + new Vector2Int( 0,-1));
+        EnqueueRebuildIfActive(coord + new Vector2Int( 0, 1));
     }
 
     private void UnloadChunk(Vector2Int coord)
     {
         if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) return;
 
+        _queuedRebuilds.Remove(coord);
         chunk.Reset();
         chunk.gameObject.SetActive(false);
         _pool.Enqueue(chunk);
@@ -253,10 +277,17 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         _drainBuffer.Clear();
         _scheduler.DrainCompleted(_drainBuffer, int.MaxValue); // cheap — just data handoff, no mesh work here
 
-        foreach (var (coord, data) in _drainBuffer)
+        // Pass 1: Cache all finished chunk datas first so any cross-chunk neighbour
+        // lookup from any chunk activated in Pass 2 immediately sees its neighbours.
+        for (int i = 0; i < _drainBuffer.Count; i++)
         {
-            _chunkDataCache[coord] = data;
+            _chunkDataCache[_drainBuffer[i].coord] = _drainBuffer[i].data;
+        }
 
+        // Pass 2: Activate chunks that are desired.
+        for (int i = 0; i < _drainBuffer.Count; i++)
+        {
+            var (coord, data) = _drainBuffer[i];
             if (_desiredChunks.Contains(coord) && !_activeChunks.ContainsKey(coord))
                 ActivateChunk(coord, data);
         }
@@ -264,20 +295,31 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 
     // ── Rebuild queue ─────────────────────────────────────────────────────────
 
-    /// <summary>Adds coord to the rebuild queue (deduplicated at consume time).</summary>
+    /// <summary>Adds coord to the rebuild queue (deduplicated).</summary>
     public void EnqueueRebuild(Vector2Int coord)
     {
-        _rebuildQueue.Enqueue(coord);
+        if (_queuedRebuilds.Add(coord))
+        {
+            _rebuildQueue.Enqueue(coord);
+            if (_activeChunks.TryGetValue(coord, out VoxelChunk chunk))
+                chunk.IsMeshDirty = true;
+        }
     }
 
     private void ProcessRebuildQueue()
     {
-        int budget = settings.maxChunkBuildsPerFrame;
+        int minBuilds = settings != null ? Mathf.Max(1, settings.maxChunkBuildsPerFrame) : 2;
         int processed = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        while (_rebuildQueue.Count > 0 && processed < budget)
+        while (_rebuildQueue.Count > 0)
         {
+            // Process at least minBuilds, and keep building if within 4ms frame budget
+            if (processed >= minBuilds && sw.ElapsedMilliseconds >= 4)
+                break;
+
             Vector2Int coord = _rebuildQueue.Dequeue();
+            _queuedRebuilds.Remove(coord);
 
             if (!_activeChunks.TryGetValue(coord, out VoxelChunk chunk)) continue;
             if (chunk.Data == null) continue;
@@ -480,9 +522,9 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
 
     private Vector2Int BlockToChunkCoord(int wx, int wz)
     {
-        // Use FloorToInt to handle negative block coords correctly
-        int cx = Mathf.FloorToInt((float)wx / settings.chunkWidth);
-        int cz = Mathf.FloorToInt((float)wz / settings.chunkWidth);
+        int w = settings.chunkWidth;
+        int cx = wx >= 0 ? wx / w : (wx - w + 1) / w;
+        int cz = wz >= 0 ? wz / w : (wz - w + 1) / w;
         return new Vector2Int(cx, cz);
     }
 

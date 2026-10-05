@@ -319,7 +319,8 @@ public class VoxelDebugHUD : MonoBehaviour
         else if (_playerCamera != null)
         {
             // Fallback raycast if WorldRaycaster has no hit or is absent
-            Ray ray = new Ray(_playerCamera.transform.position, _playerCamera.transform.forward);
+            Vector3 fallbackOrigin = _playerCamera.transform.position + _playerCamera.transform.forward * 0.35f;
+            Ray ray = new Ray(fallbackOrigin, _playerCamera.transform.forward);
             if (Physics.Raycast(ray, out RaycastHit hit, 8f, ~0, QueryTriggerInteraction.Ignore))
             {
                 hasHit = true;
@@ -351,7 +352,7 @@ public class VoxelDebugHUD : MonoBehaviour
         }
 
         // 2. Otherwise it's a voxel block
-        Vector3 blockCenter = hitPoint - hitNormal * 0.01f;
+        Vector3 blockCenter = hitPoint - hitNormal * WorldRaycaster.HitBias;
         Vector3Int targetPos = VoxelBlockPlacer.WorldPointToBlockCoord(blockCenter);
         float distance = _playerCamera != null ? Vector3.Distance(_playerCamera.transform.position, hitPoint) : 0f;
 
@@ -365,7 +366,7 @@ public class VoxelDebugHUD : MonoBehaviour
             // Secondary sample if grazing edge hit Air
             if (blockId == 0)
             {
-                Vector3 deeperCenter = hitPoint - hitNormal * 0.1f;
+                Vector3 deeperCenter = hitPoint - hitNormal * (WorldRaycaster.HitBias * 1.5f);
                 Vector3Int deeperPos = VoxelBlockPlacer.WorldPointToBlockCoord(deeperCenter);
                 byte deeperId = worldManager.GetBlockAt(deeperPos.x, deeperPos.y, deeperPos.z);
                 if (deeperId != 0)

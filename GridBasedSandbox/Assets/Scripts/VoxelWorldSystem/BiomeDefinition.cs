@@ -91,6 +91,9 @@ public class BiomeDefinition : ScriptableObject
              "Higher = wider beach strips.")]
     public int beachDepthBelowSeaLevel = 3;
 
+    [Tooltip("Maximum blocks above sea level the beach strip extends. Varies smoothly between 1 and this value along the coast.")]
+    [Range(0, 8)] public int beachHeightAboveSeaLevel = 3;
+
     // ── Shape ─────────────────────────────────────────────────────────────────
     [Header("Shape")]
     [Tooltip("Remaps continentalness [0..1] to a shaped [0..1] before it becomes height. " +

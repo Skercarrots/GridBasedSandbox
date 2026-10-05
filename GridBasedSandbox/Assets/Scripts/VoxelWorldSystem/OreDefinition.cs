@@ -112,5 +112,18 @@ public class OreDefinition : ScriptableObject
         }
         return false;
     }
+
+    /// <summary>Returns true if the given biome is allowed by biomeFilter (or if filter is empty).</summary>
+    public bool IsBiomeAllowed(BiomeDefinition biome)
+    {
+        if (biomeFilter == null || biomeFilter.Length == 0) return true;
+        if (biome == null) return false;
+        for (int i = 0; i < biomeFilter.Length; i++)
+        {
+            if (biomeFilter[i] == biome)
+                return true;
+        }
+        return false;
+    }
 }
 

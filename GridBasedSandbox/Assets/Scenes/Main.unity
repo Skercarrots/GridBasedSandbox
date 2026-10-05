@@ -669,7 +669,7 @@ MonoBehaviour:
   loadingCamera: {fileID: 1637048129}
   worldRaycaster: {fileID: 1042895772}
   spawnColumn: {x: 0, y: 0}
-  initialLoadRadiusInChunks: 10
+  initialLoadRadiusInChunks: 3
 --- !u!114 &820910446
 MonoBehaviour:
   m_ObjectHideFlags: 0

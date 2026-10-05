@@ -94,6 +94,19 @@ public class VoxelBlockPlacer : MonoBehaviour
         // Any code path that removes blocks — player, robot.mine_*, etc. — must
         // go through here or call IsBlockBreakable() first.
         byte existingId = worldManager.GetBlockAt(blockPos.x, blockPos.y, blockPos.z);
+        if (existingId == 0)
+        {
+            // Secondary sample slightly deeper into the block in case of edge grazing
+            Vector3 deeperPoint = point - normal * (WorldRaycaster.HitBias * 1.5f);
+            Vector3Int deeperPos = WorldPointToBlockCoord(deeperPoint);
+            byte deeperId = worldManager.GetBlockAt(deeperPos.x, deeperPos.y, deeperPos.z);
+            if (deeperId != 0)
+            {
+                blockPos = deeperPos;
+                existingId = deeperId;
+            }
+        }
+
         if (!IsBlockBreakable(settings.blockRegistry, existingId)) return;
 
         worldManager.TrySetBlock(blockPos.x, blockPos.y, blockPos.z, 0);
@@ -115,7 +128,7 @@ public class VoxelBlockPlacer : MonoBehaviour
     private bool TryGetTerrainHit(out Vector3 point, out Vector3 normal)
     {
         var raycaster = WorldRaycaster.Instance;
-        if (raycaster == null || !raycaster.HasHit)
+        if (raycaster == null || !raycaster.HasHit || raycaster.Collider == null)
         {
             point = default;
             normal = default;
@@ -123,7 +136,10 @@ public class VoxelBlockPlacer : MonoBehaviour
         }
 
         int hitLayer = raycaster.Collider.gameObject.layer;
-        if (((1 << hitLayer) & chunkLayer) == 0)
+        bool matchesLayer = chunkLayer.value != 0 && ((1 << hitLayer) & chunkLayer.value) != 0;
+        bool isChunk = raycaster.Collider.GetComponent<VoxelChunk>() != null;
+
+        if (!matchesLayer && !isChunk)
         {
             point = default;
             normal = default;

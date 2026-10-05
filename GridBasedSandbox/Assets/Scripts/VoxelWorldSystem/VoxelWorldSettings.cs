@@ -81,6 +81,12 @@ public class VoxelWorldSettings : ScriptableObject
     [Tooltip("Material that holds the block atlas texture. Must use a shader with vertex colours if you want tinting.")]
     public Material chunkMaterial;
 
+    [Tooltip("Transparent material for water and fluid blocks. If unset, uses chunkMaterial.")]
+    public Material waterMaterial;
+
+    [Tooltip("Height of water surface relative to full block (Minecraft default is 14/16 = 0.875).")]
+    [Range(0.5f, 1f)] public float waterHeight = 0.875f;
+
     // ── Debug ──────────────────────────────────────────────────────────────────
     [Header("Debug")]
     [Tooltip("When true, only ore blocks are rendered (everything else becomes invisible). " +

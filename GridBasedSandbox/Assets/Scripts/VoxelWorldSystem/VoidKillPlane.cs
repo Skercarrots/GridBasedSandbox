@@ -39,16 +39,51 @@ public class VoidKillPlane : MonoBehaviour
         if (mgr == null)
         {
             // Fallback: just teleport above min height
-            transform.position = new Vector3(
+            Vector3 fallbackPos = new Vector3(
                 transform.position.x,
                 settings.minHeight + 10f,
                 transform.position.z);
+            TeleportPlayer(fallbackPos);
             Debug.LogWarning("[VoidKillPlane] No VoxelWorldManager — teleported to fallback height.");
             return;
         }
 
         Vector3 safePos = mgr.GetSpawnPosition(safeColumn.x, safeColumn.y);
-        transform.position = safePos;
+        TeleportPlayer(safePos);
         Debug.Log($"[VoidKillPlane] Player fell below void — teleported to {safePos}.");
+    }
+
+    /// <summary>Safely relocates the player and zeroes out velocity on PlayerController, CharacterController, or Rigidbody.</summary>
+    private void TeleportPlayer(Vector3 targetPos)
+    {
+        // 1. PlayerController (custom voxel controller)
+        var playerCtrl = GetComponent<PlayerController>();
+        if (playerCtrl != null)
+        {
+            playerCtrl.Teleport(targetPos);
+            return;
+        }
+
+        // 2. CharacterController
+        var cc = GetComponent<CharacterController>();
+        if (cc != null)
+        {
+            cc.enabled = false;
+            transform.position = targetPos;
+            cc.enabled = true;
+            return;
+        }
+
+        // 3. Rigidbody
+        var rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.position = targetPos;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        // 4. Default Transform fallback
+        transform.position = targetPos;
     }
 }

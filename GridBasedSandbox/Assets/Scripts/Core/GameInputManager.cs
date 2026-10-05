@@ -29,6 +29,19 @@ public class GameInputManager : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Alpha0))
             inventoryManager.ChangeCurrentSelectedSlot(9);
+
+        // Mouse scroll wheel support for cycling hotbar slots
+        float scroll = Input.GetAxisRaw("Mouse ScrollWheel");
+        if (scroll > 0.01f)
+        {
+            int next = (inventoryManager.CurrentSelectedSlot - 1 + inventoryManager.SlotCount) % inventoryManager.SlotCount;
+            inventoryManager.ChangeCurrentSelectedSlot(next);
+        }
+        else if (scroll < -0.01f)
+        {
+            int next = (inventoryManager.CurrentSelectedSlot + 1) % inventoryManager.SlotCount;
+            inventoryManager.ChangeCurrentSelectedSlot(next);
+        }
     }
 
     private void PlaceObjectsInput()
@@ -46,7 +59,13 @@ public class GameInputManager : MonoBehaviour
             }
 
             ItemData selected = inventoryManager.GetSelectedItem();
-            if (selected == null) return;
+            if (selected == null)
+            {
+                // Place default block when empty-handed
+                voxelBlockPlacer.PlaceBlock(0);
+                return;
+            }
+
             if (!selected.isPlaceable) return;
 
             if (selected.isEntity)

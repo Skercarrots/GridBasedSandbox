@@ -248,6 +248,34 @@ public class PlayerController : MonoBehaviour
             LockCursor();
     }
 
+    // ── Velocity & Teleport ────────────────────────────────────────────────
+    
+    /// <summary>Resets horizontal and vertical velocities, queued jumps, and momentum. Useful for respawns.</summary>
+    public void ResetVelocity()
+    {
+        if (_rb != null)
+        {
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+        }
+        _jumpQueued = false;
+        _takeoffSpeed = walkSpeed;
+    }
+
+    /// <summary>Teleports the player to a target position and zeroes out velocity cleanly.</summary>
+    public void Teleport(Vector3 position)
+    {
+        transform.position = position;
+        if (_rb != null)
+        {
+            _rb.position = position;
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+        }
+        _jumpQueued = false;
+        _takeoffSpeed = walkSpeed;
+    }
+
     public void LockCursor()
     {
         Cursor.lockState = CursorLockMode.Locked;

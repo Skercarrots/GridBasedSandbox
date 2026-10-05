@@ -13,40 +13,68 @@ MonoBehaviour:
   m_Name: Biome_Dunes
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinition
   biomeName: Dunes
-  minTemperature: 0.7
+  minTemperature: 0.52
   maxTemperature: 1
   minHumidity: 0
-  maxHumidity: 0.3
-  minContinentalness: 0.26
-  maxContinentalness: 0.85
-  minErosion: 0.4
+  maxHumidity: 0.38
+  minContinentalness: 0.28
+  maxContinentalness: 0.82
+  minErosion: 0.15
   maxErosion: 1
   minWeirdness: 0
-  maxWeirdness: 0.5
+  maxWeirdness: 0.65
   surfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
   subsurfaceBlock: {fileID: 11400000, guid: f1d6091d9e733c24998746014ca36bcc, type: 2}
-  subsurfaceDepth: 4
+  subsurfaceDepth: 5
   steepSlopeBlock: {fileID: 0}
   slopeSteepnessThreshold: 1.2
   snowlineBlock: {fileID: 0}
   snowlineY: 80
   beachBlock: {fileID: 0}
-  beachDepthBelowSeaLevel: 3
+  beachDepthBelowSeaLevel: 4
+  beachHeightAboveSeaLevel: 3
   heightCurve:
     serializedVersion: 2
     m_Curve:
     - serializedVersion: 3
       time: 0
-      value: 0.18
-      inSlope: 0.3
-      outSlope: 0.3
+      value: 0.248
+      inSlope: 0.05
+      outSlope: 0.05
       tangentMode: 0
       weightedMode: 0
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.26
-      value: 0.255
+      time: 0.3
+      value: 0.258
+      inSlope: 0.12
+      outSlope: 0.12
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.45
+      value: 0.285
+      inSlope: 0.22
+      outSlope: 0.22
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.6
+      value: 0.335
+      inSlope: 0.32
+      outSlope: 0.32
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.75
+      value: 0.405
       inSlope: 0.38
       outSlope: 0.38
       tangentMode: 0
@@ -54,26 +82,8 @@ MonoBehaviour:
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.35
-      value: 0.3
-      inSlope: 0.35
-      outSlope: 0.35
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.5
-      value: 0.36
-      inSlope: 0.36
-      outSlope: 0.36
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.7
-      value: 0.44
+      time: 0.88
+      value: 0.47
       inSlope: 0.35
       outSlope: 0.35
       tangentMode: 0
@@ -82,8 +92,8 @@ MonoBehaviour:
       outWeight: 0
     - serializedVersion: 3
       time: 1
-      value: 0.54
-      inSlope: 0.28
+      value: 0.525
+      inSlope: 0.25
       outSlope: 0
       tangentMode: 0
       weightedMode: 0

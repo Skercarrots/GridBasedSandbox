@@ -26,9 +26,11 @@ using UnityEngine;
 public class VoxelChunk : MonoBehaviour
 {
     // ── Components ────────────────────────────────────────────────────────────
-    private MeshFilter   _filter;
-    private MeshRenderer _renderer;
-    private MeshCollider _collider;
+    private MeshFilter         _filter;
+    private MeshRenderer       _renderer;
+    private MeshCollider       _collider;
+    private Mesh               _colliderMesh;
+    private VoxelWorldSettings _settings;
 
     // ── Data ──────────────────────────────────────────────────────────────────
     public VoxelChunkData Data { get; private set; }
@@ -46,13 +48,19 @@ public class VoxelChunk : MonoBehaviour
         _filter.mesh = new Mesh { name = "ChunkMesh" };
     }
 
+    private void OnDestroy()
+    {
+        if (_colliderMesh != null) Destroy(_colliderMesh);
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>Attaches chunk data and positions the GameObject in the world.</summary>
     public void SetData(VoxelChunkData data, VoxelWorldSettings settings, Material material)
     {
         Data = data;
-        _renderer.material = material;
+        _settings = settings;
+        _renderer.sharedMaterial = material;
         IsMeshDirty = true;
 
         // Position the chunk: world origin X/Z, bottom of the world at minHeight.
@@ -70,9 +78,31 @@ public class VoxelChunk : MonoBehaviour
         Mesh mesh = _filter.mesh;
         meshData.ApplyToMesh(mesh);
 
-        // Sync the collider to the new mesh
+        // Assign materials: Submesh 0 = Solid Opaque, Submesh 1 = Water Transparent
+        Material chunkMat = _settings != null && _settings.chunkMaterial != null ? _settings.chunkMaterial : _renderer.sharedMaterial;
+        Material waterMat = _settings != null ? _settings.waterMaterial : null;
+
+        if (meshData.HasWater && waterMat != null)
+        {
+            _renderer.sharedMaterials = new Material[] { chunkMat, waterMat };
+        }
+        else
+        {
+            _renderer.sharedMaterials = new Material[] { chunkMat };
+        }
+
+        // Sync the collider to the new mesh (or solid-only collider mesh if chunk contains non-solid blocks like water)
         _collider.sharedMesh = null;   // force refresh
-        _collider.sharedMesh = mesh;
+        if (meshData.HasSeparateCollider)
+        {
+            if (_colliderMesh == null) _colliderMesh = new Mesh { name = "ChunkColliderMesh" };
+            meshData.ApplyToColliderMesh(_colliderMesh);
+            _collider.sharedMesh = _colliderMesh;
+        }
+        else
+        {
+            _collider.sharedMesh = mesh;
+        }
 
         IsMeshDirty = false;
     }
@@ -81,7 +111,9 @@ public class VoxelChunk : MonoBehaviour
     public void Reset()
     {
         Data = null;
+        _settings = null;
         _filter.mesh.Clear();
+        if (_colliderMesh != null) _colliderMesh.Clear();
         _collider.sharedMesh = null;
         IsMeshDirty = false;
         gameObject.name = "Chunk_Pooled";

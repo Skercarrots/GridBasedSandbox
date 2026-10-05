@@ -95,7 +95,7 @@ public static class StructurePlacer
                 BiomeDefinition biome = surfaceSampler.GetBiome(candidateWX, candidateWZ);
                 if (!feature.IsBiomeAllowed(biome)) continue;
 
-                // 3. Terrain surface query
+                // 3. Terrain surface query (evaluated consistently for all chunks to avoid seams)
                 if (!surfaceSampler.TryGetSurface(candidateWX, candidateWZ, out int surfaceY, out byte groundBlockId, out float slope))
                     continue;
 
@@ -112,8 +112,11 @@ public static class StructurePlacer
                 if (!feature.IsGroundAllowed(groundBlockId)) continue;
 
                 // 8. Air clearance check
-                if (feature.requiredAirClearance > 0 && !surfaceSampler.IsAirColumn(candidateWX, surfaceY + 1, candidateWZ, feature.requiredAirClearance))
-                    continue;
+                if (feature.requiredAirClearance > 0)
+                {
+                    if (!surfaceSampler.IsAirColumn(candidateWX, surfaceY + 1, candidateWZ, feature.requiredAirClearance))
+                        continue;
+                }
 
                 // Anchor is directly on top of the ground block
                 int anchorWX = candidateWX;
