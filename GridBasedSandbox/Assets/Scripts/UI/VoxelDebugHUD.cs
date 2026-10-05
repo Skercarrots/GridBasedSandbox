@@ -109,6 +109,29 @@ public class VoxelDebugHUD : MonoBehaviour
             UpdateUIVisibility();
         }
 
+        // Toggle Dev Menu on F1 or F4
+        if (Input.GetKeyDown(KeyCode.F1) || Input.GetKeyDown(KeyCode.F4))
+        {
+            if (DevMenuController.Instance != null)
+            {
+                DevMenuController.Instance.ToggleMenu();
+            }
+            else
+            {
+                var existing = FindFirstObjectByType<DevMenuController>();
+                if (existing != null)
+                {
+                    existing.ToggleMenu();
+                }
+                else
+                {
+                    var devGo = new GameObject("DevMenuController");
+                    var dev = devGo.AddComponent<DevMenuController>();
+                    dev.SetMenuOpen(true);
+                }
+            }
+        }
+
         if (!_isVisible) return;
 
         UpdateFpsCounters();
@@ -275,7 +298,7 @@ public class VoxelDebugHUD : MonoBehaviour
         }
 
         _leftSb.AppendLine();
-        _leftSb.Append("<color=#666666>[F3] Toggle HUD</color>");
+        _leftSb.Append("<color=#666666>[F3] Toggle HUD  |  [F1] Dev Menu</color>");
 
         if (leftText != null)
             leftText.text = _leftSb.ToString();

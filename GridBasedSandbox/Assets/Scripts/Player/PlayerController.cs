@@ -56,6 +56,61 @@ public class PlayerController : MonoBehaviour
     [Tooltip("Max up/down angle. 89 = almost straight up/down without flipping.")]
     [SerializeField] private float maxPitch = 89f;
 
+    // ── Flight (Dev / Exploration) ──────────────────────────────────────────
+
+    [Header("Flight (Dev / Creative)")]
+    [Tooltip("Is flight mode enabled?")]
+    [SerializeField] private bool isFlying = false;
+
+    [Tooltip("Base flying movement velocity in units/second.")]
+    [SerializeField] private float flySpeed = 16f;
+
+    [Tooltip("Multiplier applied to flySpeed when holding Left Shift.")]
+    [SerializeField] private float flySprintMultiplier = 2f;
+
+    [Tooltip("If true, flying forward/backward moves along camera look direction instead of horizontal plane.")]
+    [SerializeField] private bool cameraRelativeFly = false;
+
+    [Tooltip("If true, passes through solid blocks while flying (No-Clip).")]
+    [SerializeField] private bool noClip = false;
+
+    // Double-tap Space detection for creative flight toggle
+    private float _lastSpacePressTime = -1f;
+    private const float DoubleTapTimeThreshold = 0.28f;
+
+    // Events for UI sync
+    public event System.Action<bool> OnFlightStateChanged;
+    public event System.Action<float> OnFlySpeedChanged;
+    public event System.Action<bool> OnNoClipChanged;
+
+    public static PlayerController Instance { get; private set; }
+
+    public bool IsFlying => isFlying;
+    public float FlySpeed
+    {
+        get => flySpeed;
+        set
+        {
+            flySpeed = Mathf.Max(0.5f, value);
+            OnFlySpeedChanged?.Invoke(flySpeed);
+        }
+    }
+    public float FlySprintMultiplier
+    {
+        get => flySprintMultiplier;
+        set => flySprintMultiplier = Mathf.Max(1f, value);
+    }
+    public bool CameraRelativeFly
+    {
+        get => cameraRelativeFly;
+        set => cameraRelativeFly = value;
+    }
+    public bool NoClip
+    {
+        get => noClip;
+        set => SetNoClip(value);
+    }
+
     // ── Ground check ───────────────────────────────────────────────────────
 
     [Header("Ground Check")]
@@ -82,6 +137,8 @@ public class PlayerController : MonoBehaviour
 
     private void Awake()
     {
+        Instance = this;
+
         _rb  = GetComponent<Rigidbody>();
         _col = GetComponent<CapsuleCollider>();
 
@@ -99,29 +156,161 @@ public class PlayerController : MonoBehaviour
         LockCursor();
     }
 
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+    }
+
+    public void SetFlying(bool enable)
+    {
+        isFlying = enable;
+        if (isFlying)
+        {
+            _jumpQueued = false;
+            _isGrounded = false;
+            if (_rb != null) _rb.linearVelocity = Vector3.zero;
+            if (noClip && _col != null) _col.enabled = false;
+        }
+        else
+        {
+            if (_col != null) _col.enabled = true;
+            if (_rb != null) _rb.linearVelocity = Vector3.zero;
+        }
+        OnFlightStateChanged?.Invoke(isFlying);
+    }
+
+    public void SetFlySpeed(float speed)
+    {
+        FlySpeed = speed;
+    }
+
+    public void SetNoClip(bool enable)
+    {
+        noClip = enable;
+        if (_col != null)
+        {
+            _col.enabled = !(isFlying && noClip);
+        }
+        OnNoClipChanged?.Invoke(noClip);
+    }
+
+    public void SetCameraRelativeFly(bool enable)
+    {
+        cameraRelativeFly = enable;
+    }
+
     // ── Unity loop ─────────────────────────────────────────────────────────
 
     private void Update()
     {
         // Mouse-look: already a no-op when the cursor is unlocked, so when the
-        // IDE is open (which unlocks the cursor) this automatically suppresses.
+        // IDE or Dev Menu is open (which unlocks the cursor) this automatically suppresses.
         HandleMouseLook();
 
-        HandleGroundCheck();
+        if (isFlying)
+        {
+            _isGrounded = false;
+        }
+        else
+        {
+            HandleGroundCheck();
+        }
 
-        // ── CHANGED: suppress gameplay input while IDE is open ──────────────
-        if (GameState.IsIDEOpen) return;
+        // Check for Dev Menu hotkey (F1 or F4)
+        if (Input.GetKeyDown(KeyCode.F1) || Input.GetKeyDown(KeyCode.F4))
+        {
+            if (DevMenuController.Instance != null)
+            {
+                DevMenuController.Instance.ToggleMenu();
+            }
+            else
+            {
+                var existing = FindFirstObjectByType<DevMenuController>();
+                if (existing != null)
+                {
+                    existing.ToggleMenu();
+                }
+                else
+                {
+                    var go = new GameObject("DevMenuController");
+                    var dev = go.AddComponent<DevMenuController>();
+                    dev.SetMenuOpen(true);
+                }
+            }
+        }
 
-        if (Input.GetButtonDown("Jump") && _isGrounded)
-            _jumpQueued = true;
+        // Suppress gameplay input while IDE or Dev Menu is open
+        if (GameState.IsAnyUIOpen) return;
+
+        // Double-tap Space detection for quick flight toggle
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            if (Time.time - _lastSpacePressTime < DoubleTapTimeThreshold)
+            {
+                SetFlying(!isFlying);
+                _lastSpacePressTime = -1f;
+            }
+            else
+            {
+                _lastSpacePressTime = Time.time;
+            }
+        }
+
+        if (!isFlying)
+        {
+            if (Input.GetButtonDown("Jump") && _isGrounded)
+                _jumpQueued = true;
+        }
 
         HandleCursorToggle();
     }
 
     private void FixedUpdate()
     {
-        HandleMovement();
-        HandleGravity();
+        if (isFlying)
+        {
+            HandleFlyingMovement();
+        }
+        else
+        {
+            HandleMovement();
+            HandleGravity();
+        }
+    }
+
+    private void HandleFlyingMovement()
+    {
+        if (GameState.IsAnyUIOpen)
+        {
+            _rb.linearVelocity = Vector3.zero;
+            return;
+        }
+
+        float h = Input.GetAxisRaw("Horizontal");
+        float v = Input.GetAxisRaw("Vertical");
+
+        float upDown = 0f;
+        if (Input.GetKey(KeyCode.Space)) upDown += 1f;
+        if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.C)) upDown -= 1f;
+
+        bool sprinting = Input.GetKey(KeyCode.LeftShift);
+        float currentSpeed = flySpeed * (sprinting ? flySprintMultiplier : 1f);
+
+        Vector3 moveDir;
+        if (cameraRelativeFly && cameraTransform != null)
+        {
+            moveDir = cameraTransform.forward * v + cameraTransform.right * h + Vector3.up * upDown;
+        }
+        else
+        {
+            Quaternion yawRotation = Quaternion.Euler(0f, _yaw, 0f);
+            moveDir = yawRotation * Vector3.forward * v + yawRotation * Vector3.right * h + Vector3.up * upDown;
+        }
+
+        if (moveDir.sqrMagnitude > 1f)
+            moveDir.Normalize();
+
+        _rb.linearVelocity = moveDir * currentSpeed;
     }
 
     // ── Mouse look ─────────────────────────────────────────────────────────
@@ -162,7 +351,7 @@ public class PlayerController : MonoBehaviour
         // ── CHANGED: drain horizontal velocity and bail when IDE is open ────
         // We drain rather than just returning so the player doesn't keep
         // sliding in the direction they were walking before opening the IDE.
-        if (GameState.IsIDEOpen)
+        if (GameState.IsAnyUIOpen)
         {
             _rb.linearVelocity = new Vector3(0f, _rb.linearVelocity.y, 0f);
             _jumpQueued = false;

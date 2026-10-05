@@ -12,8 +12,8 @@ public class GameInputManager : MonoBehaviour
 
     void Update()
     {
-        // Suppress gameplay input while the in-game IDE is open
-        if (GameState.IsIDEOpen) return;
+        // Suppress gameplay input while the in-game IDE or Dev Menu is open
+        if (GameState.IsAnyUIOpen) return;
 
         InventoryInput();
         PlaceObjectsInput();

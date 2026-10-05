@@ -21,9 +21,20 @@ public static class GameState
     /// Read by:
     ///   • PlayerController  — suppresses movement and jump input
     ///   • GameInputManager  — suppresses block/entity placement and hotbar
-    /// MouseLook is NOT explicitly suppressed here because
-    /// PlayerController.HandleMouseLook() already returns early when the
-    /// cursor is unlocked — and ToggleIDE() unlocks the cursor on open.
     /// </summary>
     public static bool IsIDEOpen { get; set; } = false;
+
+    /// <summary>
+    /// True while the in-game Dev Menu is open.
+    /// Written exclusively by DevMenuController.SetMenuOpen().
+    /// Read by:
+    ///   • PlayerController  — suppresses movement and jump input
+    ///   • GameInputManager  — suppresses block/entity placement and hotbar
+    /// </summary>
+    public static bool IsDevMenuOpen { get; set; } = false;
+
+    /// <summary>
+    /// True if either the IDE or Dev Menu is currently open.
+    /// </summary>
+    public static bool IsAnyUIOpen => IsIDEOpen || IsDevMenuOpen;
 }
