@@ -1,0 +1,167 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 471ee318aded04d41924c61f6c210510, type: 3}
+  m_Name: DevMenuItemPalette
+  m_EditorClassIdentifier: Assembly-CSharp::DevMenuItemPalette
+  items:
+  - displayName: Dirt
+    voxelBlockId: 2
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Grass
+    voxelBlockId: 3
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Sand
+    voxelBlockId: 4
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Stone
+    voxelBlockId: 1
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Water
+    voxelBlockId: 5
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Fluids
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Bedrock
+    voxelBlockId: 6
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Log
+    voxelBlockId: 7
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Flora
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Leaves
+    voxelBlockId: 8
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Flora
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Snow
+    voxelBlockId: 9
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Gravel
+    voxelBlockId: 10
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Terrain
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Coal Ore
+    voxelBlockId: 11
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Ores
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Iron Ore
+    voxelBlockId: 12
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Ores
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Copper Ore
+    voxelBlockId: 13
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Ores
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Gold Ore
+    voxelBlockId: 14
+    isEntity: 0
+    itemData: {fileID: 0}
+    category: Ores
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Button
+    voxelBlockId: 0
+    isEntity: 1
+    itemData: {fileID: 11400000, guid: 5b2a3e1a2b5fdde4bb58711f94bcfbb1, type: 2}
+    category: Entities
+    defaultAmount: 1
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: GO_Example
+    voxelBlockId: 0
+    isEntity: 1
+    itemData: {fileID: 11400000, guid: 56292d52a4632a24fa01681ea49f8187, type: 2}
+    category: Entities
+    defaultAmount: 1
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Grass
+    voxelBlockId: 0
+    isEntity: 0
+    itemData: {fileID: 11400000, guid: 86b35f00b2cdfe84b9032d20a984d7fa, type: 2}
+    category: Items
+    defaultAmount: 64
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Robot
+    voxelBlockId: 0
+    isEntity: 1
+    itemData: {fileID: 11400000, guid: 98950a7d768ef804199816f2d327f523, type: 2}
+    category: Entities
+    defaultAmount: 1
+    customIcon: {fileID: 0}
+    isEnabled: 1
+  - displayName: Soil
+    voxelBlockId: 0
+    isEntity: 1
+    itemData: {fileID: 11400000, guid: d81e34223ed23fd4599067b075008872, type: 2}
+    category: Entities
+    defaultAmount: 1
+    customIcon: {fileID: 0}
+    isEnabled: 1

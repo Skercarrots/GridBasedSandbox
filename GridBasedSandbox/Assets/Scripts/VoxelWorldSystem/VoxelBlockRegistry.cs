@@ -66,4 +66,7 @@ public class VoxelBlockRegistry : ScriptableObject
     }
 
     public int Count => _lookup?.Count ?? 0;
+
+    /// <summary>Returns the underlying registered block list.</summary>
+    public IReadOnlyList<VoxelBlockType> RegisteredBlocks => blocks;
 }

@@ -92,6 +92,22 @@ public class DevMenuController : MonoBehaviour
     private TextMeshProUGUI _bottomStatusText;
     private TextMeshProUGUI _worldDiagnosticsText;
 
+    // Customizable Item Palette
+    private DevMenuItemPalette _palette;
+    private string _activeItemCategory = "ALL";
+    private int _selectedGrantAmount = 64;
+    private Transform _itemsGridContainer;
+    private TextMeshProUGUI _itemsFeedbackText;
+    private Transform _categoryBtnContainer;
+    private readonly List<string> _categoryButtonKeys = new();
+    private readonly List<Image> _categoryButtonImgs = new();
+    private readonly List<TextMeshProUGUI> _categoryButtonTexts = new();
+    private readonly List<int> _qtyButtonAmounts = new();
+    private readonly List<Image> _qtyButtonImgs = new();
+    private readonly List<TextMeshProUGUI> _qtyButtonTexts = new();
+    private readonly Dictionary<byte, ItemData> _runtimeItemDataCache = new();
+    private Sprite _fallbackCubeIcon;
+
     // Dragging
     private bool _isDragging = false;
     private Vector2 _dragOffset;
@@ -210,6 +226,11 @@ public class DevMenuController : MonoBehaviour
             Cursor.visible = true;
             RefreshFlightUI();
             UpdateLiveStats();
+            if (_currentTab == DevTab.Items)
+            {
+                RebuildCategoryButtons();
+                RebuildItemsGrid();
+            }
         }
         else
         {
@@ -472,41 +493,154 @@ public class DevMenuController : MonoBehaviour
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Quick Item Granting
+    //  Quick Item Granting (Palette Integration)
     // ═══════════════════════════════════════════════════════════════════════════
+
+    public void EnsurePaletteLoaded()
+    {
+        if (_palette != null && _palette.items.Count > 0) return;
+
+        _palette = DevMenuItemPalette.LoadPalette();
+
+        if (_palette == null || _palette.items.Count == 0)
+        {
+            _palette = ScriptableObject.CreateInstance<DevMenuItemPalette>();
+            BuildFallbackPalette(_palette);
+        }
+
+        if (_fallbackCubeIcon == null)
+        {
+            var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
+            foreach (var it in allItems)
+            {
+                if (it.icon != null)
+                {
+                    _fallbackCubeIcon = it.icon;
+                    break;
+                }
+            }
+        }
+    }
+
+    private void BuildFallbackPalette(DevMenuItemPalette targetPalette)
+    {
+        targetPalette.items.Clear();
+
+        var wm = VoxelWorldManager.Instance;
+        var registry = wm != null && wm.Settings != null ? wm.Settings.blockRegistry : null;
+        if (registry == null)
+        {
+            var regs = Resources.FindObjectsOfTypeAll<VoxelBlockRegistry>();
+            if (regs.Length > 0) registry = regs[0];
+        }
+
+        if (registry != null)
+        {
+            foreach (var b in registry.RegisteredBlocks)
+            {
+                if (b == null || b.blockId == 0) continue; // Skip Air
+                string cat = "Terrain";
+                string n = b.blockName.ToLowerInvariant();
+                if (n.Contains("ore") || n.Contains("coal") || n.Contains("iron") || n.Contains("copper") || n.Contains("gold")) cat = "Ores";
+                else if (n.Contains("log") || n.Contains("wood") || n.Contains("leaves")) cat = "Flora";
+                else if (n.Contains("water") || n.Contains("fluid")) cat = "Fluids";
+
+                targetPalette.items.Add(new DevMenuItemEntry
+                {
+                    displayName = b.blockName,
+                    voxelBlockId = b.blockId,
+                    isEntity = false,
+                    category = cat,
+                    defaultAmount = 64,
+                    isEnabled = true
+                });
+            }
+        }
+        else
+        {
+            // Default real blocks
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Stone", voxelBlockId = 1, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Dirt", voxelBlockId = 2, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Grass", voxelBlockId = 3, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Sand", voxelBlockId = 4, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Water", voxelBlockId = 5, category = "Fluids", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Bedrock", voxelBlockId = 6, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Log", voxelBlockId = 7, category = "Flora", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Leaves", voxelBlockId = 8, category = "Flora", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Snow", voxelBlockId = 9, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Gravel", voxelBlockId = 10, category = "Terrain", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Coal Ore", voxelBlockId = 11, category = "Ores", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Iron Ore", voxelBlockId = 12, category = "Ores", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Copper Ore", voxelBlockId = 13, category = "Ores", defaultAmount = 64, isEnabled = true });
+            targetPalette.items.Add(new DevMenuItemEntry { displayName = "Gold Ore", voxelBlockId = 14, category = "Ores", defaultAmount = 64, isEnabled = true });
+        }
+
+        targetPalette.items.Add(new DevMenuItemEntry { displayName = "Robot", voxelBlockId = 0, isEntity = true, category = "Entities", defaultAmount = 1, isEnabled = true });
+    }
+
+    public void GrantPaletteItem(DevMenuItemEntry entry, int amount = -1)
+    {
+        var invMgr = FindFirstObjectByType<InventoryManager>();
+        if (invMgr == null) return;
+
+        int finalAmount = amount > 0 ? amount : (entry.isEntity ? entry.defaultAmount : _selectedGrantAmount);
+
+        // 1. Direct ItemData reference
+        if (entry.itemData != null)
+        {
+            invMgr.TryAddItem(entry.itemData, finalAmount);
+            invMgr.RefreshSelectedSlot();
+            ShowItemGrantFeedback(entry.displayName, finalAmount);
+            return;
+        }
+
+        // 2. Entity item (e.g. Robot)
+        if (entry.isEntity)
+        {
+            GiveRobotItem(finalAmount);
+            ShowItemGrantFeedback(entry.displayName, finalAmount);
+            return;
+        }
+
+        // 3. Voxel Block
+        GiveBlockItem(entry.voxelBlockId, entry.displayName, finalAmount);
+        ShowItemGrantFeedback(entry.displayName, finalAmount);
+    }
 
     public void GiveBlockItem(byte blockId, string blockName, int amount = 64)
     {
         var invMgr = FindFirstObjectByType<InventoryManager>();
         if (invMgr == null) return;
 
-        var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
-        ItemData matched = null;
-        foreach (var it in allItems)
+        if (!_runtimeItemDataCache.TryGetValue(blockId, out ItemData targetItem) || targetItem == null)
         {
-            if (!it.isEntity && it.voxelBlockId == blockId)
+            var allItems = Resources.FindObjectsOfTypeAll<ItemData>();
+            foreach (var it in allItems)
             {
-                matched = it;
-                break;
+                if (!it.isEntity && it.voxelBlockId == blockId)
+                {
+                    targetItem = it;
+                    break;
+                }
             }
+
+            if (targetItem == null)
+            {
+                var dyn = ScriptableObject.CreateInstance<ItemData>();
+                dyn.id = $"voxel_{blockId}";
+                dyn.itemName = blockName;
+                dyn.voxelBlockId = blockId;
+                dyn.isPlaceable = true;
+                dyn.maxStackAmount = 64;
+                dyn.icon = _fallbackCubeIcon;
+                targetItem = dyn;
+            }
+
+            _runtimeItemDataCache[blockId] = targetItem;
         }
 
-        if (matched != null)
-        {
-            invMgr.TryAddItem(matched, amount);
-            invMgr.RefreshSelectedSlot();
-        }
-        else
-        {
-            var dynItem = ScriptableObject.CreateInstance<ItemData>();
-            dynItem.id = $"voxel_{blockId}";
-            dynItem.itemName = blockName;
-            dynItem.voxelBlockId = blockId;
-            dynItem.isPlaceable = true;
-            dynItem.maxStackAmount = 64;
-            invMgr.TryAddItem(dynItem, amount);
-            invMgr.RefreshSelectedSlot();
-        }
+        invMgr.TryAddItem(targetItem, amount);
+        invMgr.RefreshSelectedSlot();
     }
 
     public void GiveRobotItem(int amount = 1)
@@ -530,6 +664,15 @@ public class DevMenuController : MonoBehaviour
             invMgr.TryAddItem(robotItem, amount);
             invMgr.RefreshSelectedSlot();
         }
+    }
+
+    private void ShowItemGrantFeedback(string itemName, int amount)
+    {
+        string msg = $"<color=#55FF55>Added {amount}x {itemName} to inventory!</color>";
+        if (_itemsFeedbackText != null)
+            _itemsFeedbackText.text = msg;
+        if (_bottomStatusText != null)
+            _bottomStatusText.text = msg;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -604,7 +747,15 @@ public class DevMenuController : MonoBehaviour
         if (_flightPanel != null) _flightPanel.SetActive(_currentTab == DevTab.Flight);
         if (_teleportPanel != null) _teleportPanel.SetActive(_currentTab == DevTab.Teleport);
         if (_worldPanel != null) _worldPanel.SetActive(_currentTab == DevTab.World);
-        if (_itemsPanel != null) _itemsPanel.SetActive(_currentTab == DevTab.Items);
+        if (_itemsPanel != null)
+        {
+            _itemsPanel.SetActive(_currentTab == DevTab.Items);
+            if (_currentTab == DevTab.Items)
+            {
+                RebuildCategoryButtons();
+                RebuildItemsGrid();
+            }
+        }
 
         // Refresh tab button visuals
         for (int i = 0; i < _tabButtons.Count; i++)
@@ -1182,63 +1333,294 @@ public class DevMenuController : MonoBehaviour
 
     private void BuildItemsTabContent(Transform parent)
     {
-        GameObject card1 = CreateCard(parent, "ItemsCard", 180f);
-        var iLabel = CreateTMPText(card1.transform, "Label", 12f, TextAlignmentOptions.MidlineLeft);
-        iLabel.rectTransform.anchorMin = new Vector2(0f, 1f);
-        iLabel.rectTransform.anchorMax = new Vector2(1f, 1f);
-        iLabel.rectTransform.pivot = new Vector2(0.5f, 1f);
-        iLabel.rectTransform.anchoredPosition = new Vector2(0f, -8f);
-        iLabel.rectTransform.sizeDelta = new Vector2(-24f, 20f);
-        iLabel.text = "<color=#55FFFF><b>Quick Grant Voxel Blocks & Entities:</b></color>";
+        EnsurePaletteLoaded();
 
-        // Row 1: Common Blocks
-        GameObject row1 = new GameObject("Row1", typeof(RectTransform), typeof(HorizontalLayoutGroup));
-        row1.transform.SetParent(card1.transform, false);
-        RectTransform r1Rt = row1.GetComponent<RectTransform>();
-        r1Rt.anchorMin = new Vector2(0f, 1f);
-        r1Rt.anchorMax = new Vector2(1f, 1f);
-        r1Rt.pivot = new Vector2(0.5f, 1f);
-        r1Rt.anchoredPosition = new Vector2(0f, -34f);
-        r1Rt.sizeDelta = new Vector2(-24f, 26f);
+        // ── Card 1: Category Filter & Quantity Controls (86f height) ───────
+        GameObject card1 = CreateCard(parent, "ItemsControlsCard", 86f);
 
-        HorizontalLayoutGroup h1 = row1.GetComponent<HorizontalLayoutGroup>();
-        h1.spacing = 6f;
-        h1.childControlWidth = true;
-        h1.childControlHeight = true;
+        // Top Row: Title + Quantity Selector Buttons (x1, x16, x32, x64)
+        GameObject topRow = new GameObject("TopRow", typeof(RectTransform));
+        topRow.transform.SetParent(card1.transform, false);
+        RectTransform trRt = topRow.GetComponent<RectTransform>();
+        trRt.anchorMin = new Vector2(0f, 1f);
+        trRt.anchorMax = new Vector2(1f, 1f);
+        trRt.pivot = new Vector2(0.5f, 1f);
+        trRt.anchoredPosition = new Vector2(0f, -8f);
+        trRt.sizeDelta = new Vector2(-24f, 22f);
 
-        CreatePillButton(row1.transform, "+64 Stone", 95f, 24f, () => GiveBlockItem(1, "Stone"));
-        CreatePillButton(row1.transform, "+64 Dirt", 95f, 24f, () => GiveBlockItem(2, "Dirt"));
-        CreatePillButton(row1.transform, "+64 Grass", 95f, 24f, () => GiveBlockItem(3, "Grass"));
-        CreatePillButton(row1.transform, "+64 Wood", 95f, 24f, () => GiveBlockItem(5, "Wood"));
+        var iLabel = CreateTMPText(topRow.transform, "Label", 12f, TextAlignmentOptions.MidlineLeft);
+        iLabel.rectTransform.anchorMin = new Vector2(0f, 0f);
+        iLabel.rectTransform.anchorMax = new Vector2(0.5f, 1f);
+        iLabel.rectTransform.pivot = new Vector2(0f, 0.5f);
+        iLabel.rectTransform.anchoredPosition = Vector2.zero;
+        iLabel.rectTransform.sizeDelta = Vector2.zero;
+        iLabel.text = "<color=#55FFFF><b>Item & Block Catalog</b></color>";
 
-        // Row 2: Building Materials & Entities
-        GameObject row2 = new GameObject("Row2", typeof(RectTransform), typeof(HorizontalLayoutGroup));
-        row2.transform.SetParent(card1.transform, false);
-        RectTransform r2Rt = row2.GetComponent<RectTransform>();
-        r2Rt.anchorMin = new Vector2(0f, 1f);
-        r2Rt.anchorMax = new Vector2(1f, 1f);
-        r2Rt.pivot = new Vector2(0.5f, 1f);
-        r2Rt.anchoredPosition = new Vector2(0f, -68f);
-        r2Rt.sizeDelta = new Vector2(-24f, 26f);
+        // Quantity Selector Container
+        GameObject qtyContainer = new GameObject("QtyContainer", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        qtyContainer.transform.SetParent(topRow.transform, false);
+        RectTransform qtyRt = qtyContainer.GetComponent<RectTransform>();
+        qtyRt.anchorMin = new Vector2(1f, 0.5f);
+        qtyRt.anchorMax = new Vector2(1f, 0.5f);
+        qtyRt.pivot = new Vector2(1f, 0.5f);
+        qtyRt.anchoredPosition = Vector2.zero;
+        qtyRt.sizeDelta = new Vector2(230f, 22f);
 
-        HorizontalLayoutGroup h2 = row2.GetComponent<HorizontalLayoutGroup>();
-        h2.spacing = 6f;
-        h2.childControlWidth = true;
-        h2.childControlHeight = true;
+        HorizontalLayoutGroup qtyHlg = qtyContainer.GetComponent<HorizontalLayoutGroup>();
+        qtyHlg.spacing = 4f;
+        qtyHlg.childControlWidth = false;
+        qtyHlg.childControlHeight = false;
+        qtyHlg.childAlignment = TextAnchor.MiddleRight;
 
-        CreatePillButton(row2.transform, "+64 Planks", 95f, 24f, () => GiveBlockItem(6, "Planks"));
-        CreatePillButton(row2.transform, "+64 Glass", 95f, 24f, () => GiveBlockItem(7, "Glass"));
-        CreatePillButton(row2.transform, "+64 Cobblestone", 110f, 24f, () => GiveBlockItem(4, "Cobblestone"));
-        CreatePillButton(row2.transform, "+1 Robot Entity", 110f, 24f, () => GiveRobotItem(1));
+        var qtyLabel = CreateTMPText(qtyContainer.transform, "QtyLbl", 10f, TextAlignmentOptions.MidlineRight);
+        qtyLabel.rectTransform.sizeDelta = new Vector2(32f, 20f);
+        qtyLabel.text = "<color=#94A3B8>Qty:</color>";
 
-        // Note
-        var note = CreateTMPText(card1.transform, "Note", 10f, TextAlignmentOptions.MidlineLeft);
-        note.rectTransform.anchorMin = new Vector2(0f, 0f);
-        note.rectTransform.anchorMax = new Vector2(1f, 0f);
-        note.rectTransform.pivot = new Vector2(0.5f, 0f);
-        note.rectTransform.anchoredPosition = new Vector2(0f, 8f);
-        note.rectTransform.sizeDelta = new Vector2(-24f, 22f);
-        note.text = "<color=#64748B>Items are added directly into your player inventory hotbar.</color>";
+        _qtyButtonAmounts.Clear();
+        _qtyButtonImgs.Clear();
+        _qtyButtonTexts.Clear();
+        CreateQtyButton(qtyContainer.transform, "x1", 1);
+        CreateQtyButton(qtyContainer.transform, "x16", 16);
+        CreateQtyButton(qtyContainer.transform, "x32", 32);
+        CreateQtyButton(qtyContainer.transform, "x64", 64);
+        UpdateQtyButtonsVisuals();
+
+        // Row 2: Category Filter Buttons Bar
+        GameObject catRow = new GameObject("CategoryRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        catRow.transform.SetParent(card1.transform, false);
+        RectTransform catRt = catRow.GetComponent<RectTransform>();
+        catRt.anchorMin = new Vector2(0f, 1f);
+        catRt.anchorMax = new Vector2(1f, 1f);
+        catRt.pivot = new Vector2(0.5f, 1f);
+        catRt.anchoredPosition = new Vector2(0f, -34f);
+        catRt.sizeDelta = new Vector2(-24f, 22f);
+
+        HorizontalLayoutGroup catHlg = catRow.GetComponent<HorizontalLayoutGroup>();
+        catHlg.spacing = 6f;
+        catHlg.childControlWidth = false;
+        catHlg.childControlHeight = false;
+        catHlg.childAlignment = TextAnchor.MiddleLeft;
+        _categoryBtnContainer = catRow.transform;
+
+        // Feedback / Subtitle note
+        _itemsFeedbackText = CreateTMPText(card1.transform, "FeedbackText", 10f, TextAlignmentOptions.MidlineLeft);
+        _itemsFeedbackText.rectTransform.anchorMin = new Vector2(0f, 0f);
+        _itemsFeedbackText.rectTransform.anchorMax = new Vector2(1f, 0f);
+        _itemsFeedbackText.rectTransform.pivot = new Vector2(0.5f, 0f);
+        _itemsFeedbackText.rectTransform.anchoredPosition = new Vector2(0f, 6f);
+        _itemsFeedbackText.rectTransform.sizeDelta = new Vector2(-24f, 18f);
+        _itemsFeedbackText.text = "<color=#64748B>Click any item to grant to inventory. Edit in Unity: Tools > Dev Menu > Item Palette Editor</color>";
+
+        // ── Card 2: Scrollable Items Grid (305f height) ──────────────────────
+        GameObject card2 = CreateCard(parent, "ItemsGridCard", 305f);
+
+        // ScrollRect
+        GameObject scrollGo = new GameObject("ItemsScrollView", typeof(RectTransform), typeof(ScrollRect));
+        scrollGo.transform.SetParent(card2.transform, false);
+        RectTransform scrollRt = scrollGo.GetComponent<RectTransform>();
+        Stretch(scrollRt, 8f, 8f, 8f, 8f);
+
+        ScrollRect scrollRect = scrollGo.GetComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+        scrollRect.movementType = ScrollRect.MovementType.Clamped;
+        scrollRect.scrollSensitivity = 25f;
+
+        // Viewport with RectMask2D
+        GameObject viewportGo = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+        viewportGo.transform.SetParent(scrollGo.transform, false);
+        RectTransform vpRt = viewportGo.GetComponent<RectTransform>();
+        Stretch(vpRt, 0f, 0f, 0f, 0f);
+        scrollRect.viewport = vpRt;
+
+        // Content
+        GameObject contentGo = new GameObject("Content", typeof(RectTransform), typeof(GridLayoutGroup), typeof(ContentSizeFitter));
+        contentGo.transform.SetParent(viewportGo.transform, false);
+        RectTransform contentRt = contentGo.GetComponent<RectTransform>();
+        contentRt.anchorMin = new Vector2(0f, 1f);
+        contentRt.anchorMax = new Vector2(1f, 1f);
+        contentRt.pivot = new Vector2(0.5f, 1f);
+        contentRt.anchoredPosition = Vector2.zero;
+        contentRt.sizeDelta = new Vector2(0f, 0f);
+
+        GridLayoutGroup grid = contentGo.GetComponent<GridLayoutGroup>();
+        grid.cellSize = new Vector2(166f, 28f);
+        grid.spacing = new Vector2(8f, 6f);
+        grid.padding = new RectOffset(2, 2, 4, 4);
+        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        grid.constraintCount = 3;
+
+        ContentSizeFitter csf = contentGo.GetComponent<ContentSizeFitter>();
+        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+        scrollRect.content = contentRt;
+        _itemsGridContainer = contentGo.transform;
+
+        RebuildCategoryButtons();
+        RebuildItemsGrid();
+    }
+
+    private void RebuildCategoryButtons()
+    {
+        if (_categoryBtnContainer == null) return;
+
+        // Clear previous buttons
+        for (int i = _categoryBtnContainer.childCount - 1; i >= 0; i--)
+        {
+            Destroy(_categoryBtnContainer.GetChild(i).gameObject);
+        }
+
+        _categoryButtonKeys.Clear();
+        _categoryButtonImgs.Clear();
+        _categoryButtonTexts.Clear();
+
+        EnsurePaletteLoaded();
+        var categories = _palette != null ? _palette.GetCategories() : new List<string> { "ALL" };
+
+        foreach (var cat in categories)
+        {
+            string categoryName = cat;
+            GameObject btnGo = new GameObject("Cat_" + categoryName, typeof(RectTransform), typeof(Image), typeof(UIButton));
+            btnGo.transform.SetParent(_categoryBtnContainer, false);
+
+            RectTransform rt = btnGo.GetComponent<RectTransform>();
+            rt.sizeDelta = new Vector2(68f, 22f);
+
+            bool isActive = string.Equals(_activeItemCategory, categoryName, StringComparison.OrdinalIgnoreCase);
+            Image img = btnGo.GetComponent<Image>();
+            img.color = isActive ? AmberAccent : DarkBtn;
+
+            UIButton btn = btnGo.GetComponent<UIButton>();
+            btn.onClick.AddListener(() =>
+            {
+                _activeItemCategory = categoryName;
+                UpdateCategoryButtonsVisuals();
+                RebuildItemsGrid();
+            });
+
+            var txt = CreateTMPText(btnGo.transform, "Label", 10f, TextAlignmentOptions.Center);
+            txt.text = $"<b>{categoryName}</b>";
+            txt.color = isActive ? DarkAmberText : TextMuted;
+            Stretch(txt.rectTransform);
+
+            _categoryButtonKeys.Add(categoryName);
+            _categoryButtonImgs.Add(img);
+            _categoryButtonTexts.Add(txt);
+        }
+    }
+
+    private void UpdateCategoryButtonsVisuals()
+    {
+        for (int i = 0; i < _categoryButtonKeys.Count; i++)
+        {
+            bool isActive = string.Equals(_activeItemCategory, _categoryButtonKeys[i], StringComparison.OrdinalIgnoreCase);
+            if (i < _categoryButtonImgs.Count && _categoryButtonImgs[i] != null)
+                _categoryButtonImgs[i].color = isActive ? AmberAccent : DarkBtn;
+            if (i < _categoryButtonTexts.Count && _categoryButtonTexts[i] != null)
+                _categoryButtonTexts[i].color = isActive ? DarkAmberText : TextMuted;
+        }
+    }
+
+    private void RebuildItemsGrid()
+    {
+        if (_itemsGridContainer == null) return;
+
+        for (int i = _itemsGridContainer.childCount - 1; i >= 0; i--)
+        {
+            Destroy(_itemsGridContainer.GetChild(i).gameObject);
+        }
+
+        EnsurePaletteLoaded();
+        var items = _palette != null ? _palette.GetItemsByCategory(_activeItemCategory) : new List<DevMenuItemEntry>();
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            var entry = items[i];
+            if (entry == null) continue;
+
+            CreatePaletteItemButton(_itemsGridContainer, entry);
+        }
+    }
+
+    private void CreatePaletteItemButton(Transform parent, DevMenuItemEntry entry)
+    {
+        GameObject btnGo = new GameObject("Item_" + entry.displayName, typeof(RectTransform), typeof(Image), typeof(UIButton));
+        btnGo.transform.SetParent(parent, false);
+
+        RectTransform rt = btnGo.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(166f, 28f);
+
+        Image img = btnGo.GetComponent<Image>();
+        img.color = DarkBtn;
+
+        UIButton btn = btnGo.GetComponent<UIButton>();
+        btn.onClick.AddListener(() => GrantPaletteItem(entry, -1));
+
+        // Subtly colored border/accent based on category
+        Color catColor = GetCategoryColor(entry.category);
+        GameObject accentBar = CreatePanel(btnGo.transform, "Accent", new Vector2(0f, 0f), new Vector2(0f, 1f),
+                                           new Vector2(0f, 0.5f), Vector2.zero, new Vector2(3f, 0f), catColor);
+        accentBar.GetComponent<Image>().raycastTarget = false;
+
+        // Label with name and blockId / type badge
+        var lbl = CreateTMPText(btnGo.transform, "Label", 10.5f, TextAlignmentOptions.MidlineLeft);
+        Stretch(lbl.rectTransform, 8f, 0f, 4f, 0f);
+
+        string badge = entry.isEntity ? "<color=#A78BFA>[ENT]</color>" : $"<color=#64748B>#{entry.voxelBlockId}</color>";
+        lbl.text = $"{badge} <color=#FFFFFF>{entry.displayName}</color>";
+    }
+
+    private void CreateQtyButton(Transform parent, string label, int amount)
+    {
+        GameObject btnGo = new GameObject("Qty_" + label, typeof(RectTransform), typeof(Image), typeof(UIButton));
+        btnGo.transform.SetParent(parent, false);
+
+        RectTransform rt = btnGo.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(38f, 20f);
+
+        Image img = btnGo.GetComponent<Image>();
+        img.color = DarkBtn;
+
+        UIButton btn = btnGo.GetComponent<UIButton>();
+        btn.onClick.AddListener(() =>
+        {
+            _selectedGrantAmount = amount;
+            UpdateQtyButtonsVisuals();
+        });
+
+        var txt = CreateTMPText(btnGo.transform, "Label", 10f, TextAlignmentOptions.Center);
+        txt.text = $"<b>{label}</b>";
+        txt.color = TextMuted;
+        Stretch(txt.rectTransform);
+
+        _qtyButtonAmounts.Add(amount);
+        _qtyButtonImgs.Add(img);
+        _qtyButtonTexts.Add(txt);
+    }
+
+    private void UpdateQtyButtonsVisuals()
+    {
+        for (int i = 0; i < _qtyButtonAmounts.Count; i++)
+        {
+            bool isSelected = (_selectedGrantAmount == _qtyButtonAmounts[i]);
+            if (i < _qtyButtonImgs.Count && _qtyButtonImgs[i] != null)
+                _qtyButtonImgs[i].color = isSelected ? AmberAccent : DarkBtn;
+            if (i < _qtyButtonTexts.Count && _qtyButtonTexts[i] != null)
+                _qtyButtonTexts[i].color = isSelected ? DarkAmberText : TextMuted;
+        }
+    }
+
+    private Color GetCategoryColor(string category)
+    {
+        if (string.IsNullOrEmpty(category)) return BorderSubtle;
+        string c = category.ToLowerInvariant();
+        if (c.Contains("ore")) return AmberAccent;
+        if (c.Contains("flora") || c.Contains("leaves") || c.Contains("wood") || c.Contains("log")) return EmeraldAccent;
+        if (c.Contains("fluid") || c.Contains("water")) return new Color(0.22f, 0.74f, 0.98f, 1f);
+        if (c.Contains("entit")) return new Color(0.65f, 0.55f, 0.98f, 1f);
+        if (c.Contains("terrain") || c.Contains("stone") || c.Contains("dirt") || c.Contains("grass") || c.Contains("sand")) return new Color(0.78f, 0.70f, 0.58f, 1f);
+        return BorderSubtle;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
