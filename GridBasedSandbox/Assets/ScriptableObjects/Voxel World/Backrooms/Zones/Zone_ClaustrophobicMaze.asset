@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1d2e3f4a5b6c7d8e9f01a2b3c4d5e01, type: 3}
+  m_Name: Zone_ClaustrophobicMaze
+  m_EditorClassIdentifier: Assembly-CSharp::BackroomsZoneProfile
+  zoneName: Dense Office Chambers & Corridors
+  selectionWeight: 1.5
+  layout: {fileID: 11400000, guid: e1d2c3b4a5f60718293a4b5c6d7e0003, type: 2}
+  hallSize: 18
+  hallSizeJitter: 0.1
+  fullWallProbability: 0.5
+  halfWallProbability: 0
+  openingWidthMin: 3
+  openingWidthMax: 3
+  halfWallHeight: 1
+  beamDrop: 0
+  beamThickness: 1
+  pillarSpacing: 6
+  pillarSize: 1
+  pillarProbability: 0.2
+  pillarClearance: 3
+  islandProbability: 0
+  islandLengthMin: 4
+  islandLengthMax: 6
+  lightSpacing: 4
+  penumbraProbability: 0.15
+  penumbraSize: 12
+  missingCeilingProbability: 0.04
+  customCarpet: {fileID: 0}
+  customWallpaper: {fileID: 0}
+  customCeiling: {fileID: 0}

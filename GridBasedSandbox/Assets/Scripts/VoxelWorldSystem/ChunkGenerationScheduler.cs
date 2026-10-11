@@ -48,6 +48,8 @@ public class ChunkGenerationScheduler
     // Finished results waiting to be picked up by the main thread.
     private readonly ConcurrentQueue<(Vector2Int coord, VoxelChunkData data)> _completed = new();
 
+    private readonly CancellationTokenSource _cts = new();
+
     public ChunkGenerationScheduler(WorldGenerator generator, VoxelWorldSettings settings, int seed, int maxConcurrency)
     {
         _generator = generator;
@@ -58,21 +60,34 @@ public class ChunkGenerationScheduler
         _concurrencyLimiter = new SemaphoreSlim(workers, workers);
     }
 
+    /// <summary>Cancels ongoing generation tasks and discards completed results. Called on dimension switch.</summary>
+    public void CancelAndClear()
+    {
+        _cts.Cancel();
+        _tracked.Clear();
+        while (_completed.TryDequeue(out _)) { }
+    }
+
     /// <summary>True if coord is queued, generating, or generated-but-not-drained.</summary>
     public bool IsTracked(Vector2Int coord) => _tracked.ContainsKey(coord);
 
     /// <summary>Requests background generation of coord. No-op if already tracked.</summary>
     public void Enqueue(Vector2Int coord)
     {
+        if (_cts.IsCancellationRequested) return;
         if (!_tracked.TryAdd(coord, 0)) return;
         _ = GenerateAsync(coord);
     }
 
     private async Task GenerateAsync(Vector2Int coord)
     {
+        if (_cts.IsCancellationRequested) return;
+
         await _concurrencyLimiter.WaitAsync();
         try
         {
+            if (_cts.IsCancellationRequested) return;
+
             VoxelChunkData data = await Task.Run(() =>
             {
                 var d = new VoxelChunkData(coord, _settings.chunkWidth, _settings.TotalWorldHeight);
@@ -80,12 +95,16 @@ public class ChunkGenerationScheduler
                 return d;
             });
 
-            _completed.Enqueue((coord, data));
+            if (!_cts.IsCancellationRequested)
+                _completed.Enqueue((coord, data));
         }
         catch (Exception e)
         {
-            Debug.LogError($"[ChunkGenerationScheduler] Failed generating chunk {coord}: {e}");
-            _tracked.TryRemove(coord, out _); // let a future Enqueue() retry it
+            if (!_cts.IsCancellationRequested)
+            {
+                Debug.LogError($"[ChunkGenerationScheduler] Failed generating chunk {coord}: {e}");
+                _tracked.TryRemove(coord, out _); // let a future Enqueue() retry it
+            }
         }
         finally
         {

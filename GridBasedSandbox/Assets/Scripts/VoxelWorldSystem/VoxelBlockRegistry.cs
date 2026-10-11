@@ -54,6 +54,7 @@ public class VoxelBlockRegistry : ScriptableObject
     /// <summary>Returns the block definition for the given id, or null for Air/unknown.</summary>
     public VoxelBlockType GetBlock(byte id)
     {
+        if (_lookup == null) Initialize();
         _lookup.TryGetValue(id, out VoxelBlockType block);
         return block;
     }
@@ -62,6 +63,7 @@ public class VoxelBlockRegistry : ScriptableObject
     public bool IsSolid(byte id)
     {
         if (id == 0) return false;
+        if (_lookup == null) Initialize();
         return _lookup.TryGetValue(id, out var b) && b.isSolid;
     }
 

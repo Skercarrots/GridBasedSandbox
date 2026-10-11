@@ -46,6 +46,9 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     public static VoxelWorldManager Instance { get; private set; }
 
     // ── Inspector ─────────────────────────────────────────────────────────────
+    [Header("Dimension & Profile")]
+    [SerializeField] private DimensionProfile currentDimensionProfile;
+
     [Header("Settings")]
     [SerializeField] private VoxelWorldSettings settings;
     [SerializeField] private WorldGenerator worldGenerator;
@@ -86,15 +89,31 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     // Resolved seed (may be randomised if settings.seed == 0)
     private int _seed;
 
+    // Session base seed (first dimension's settings.seed, or random if that is 0).
+    // Every dimension derives its own seed from this — see ResolveDimensionSeed().
+    private int _masterSeed;
+
     // Guards EnsureInitialized() so it only ever does its work once, no matter
     // whether it's triggered by Awake() or by an early GetSpawnPosition() call.
     private bool _initialized = false;
 
     // ── Public Accessors ──────────────────────────────────────────────────────
+    public DimensionProfile CurrentDimensionProfile => currentDimensionProfile;
     public VoxelWorldSettings Settings => settings;
     public WorldGenerator WorldGenerator => worldGenerator;
     public Transform PlayerTransform => playerTransform;
     public int Seed => _seed;
+    public int MasterSeed => _masterSeed;
+
+    /// <summary>
+    /// Seed for a dimension: its own settings.seed if set, otherwise the session master seed,
+    /// then salted through DimensionSeed (salt 0 = unchanged).
+    /// </summary>
+    private int ResolveDimensionSeed(DimensionProfile profile, VoxelWorldSettings dimensionSettings)
+    {
+        int baseSeed = dimensionSettings != null && dimensionSettings.seed != 0 ? dimensionSettings.seed : _masterSeed;
+        return DimensionSeed.Derive(baseSeed, profile.dimensionId, profile.seedSalt);
+    }
     public int ActiveChunkCount => _activeChunks.Count;
     public int CachedChunkCount => _chunkDataCache.Count;
     public int RebuildQueueCount => _rebuildQueue.Count;
@@ -119,17 +138,108 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
     {
         if (_initialized) return;
 
+        if (currentDimensionProfile != null)
+        {
+            if (settings == null) settings = currentDimensionProfile.settings;
+            if (worldGenerator == null) worldGenerator = currentDimensionProfile.generator;
+        }
+
         ValidateReferences();
-        settings.blockRegistry.Initialize();
-        _seed = settings.seed == 0 ? Random.Range(1, int.MaxValue) : settings.seed;
+        if (settings != null && settings.blockRegistry != null)
+            settings.blockRegistry.Initialize();
+
+        _masterSeed = settings != null && settings.seed != 0 ? settings.seed : Random.Range(1, int.MaxValue);
+        _seed = currentDimensionProfile != null ? ResolveDimensionSeed(currentDimensionProfile, settings) : _masterSeed;
 
         // Let the generator bake anything it'll need off-thread (e.g. an
         // AnimationCurve → LUT) BEFORE we ever dispatch a background Generate().
-        worldGenerator.Prepare();
+        if (worldGenerator != null)
+            worldGenerator.Prepare();
 
-        _scheduler = new ChunkGenerationScheduler(worldGenerator, settings, _seed, settings.maxConcurrentChunkGenerations);
+        if (worldGenerator != null && settings != null)
+            _scheduler = new ChunkGenerationScheduler(worldGenerator, settings, _seed, settings.maxConcurrentChunkGenerations);
 
         _initialized = true;
+    }
+
+    /// <summary>
+    /// Switches the active dimension. Unloads and pools active chunk GameObjects,
+    /// cancels background generation for the previous dimension, swaps generator/settings,
+    /// swaps in the target dimension's chunk data cache, and prepares streaming.
+    /// </summary>
+    public void SwitchDimension(DimensionProfile newProfile, Dictionary<Vector2Int, VoxelChunkData> targetCache)
+    {
+        if (newProfile == null)
+        {
+            Debug.LogError("[VoxelWorldManager] Cannot switch to null DimensionProfile!");
+            return;
+        }
+
+        // 1. Unload all active chunks into pool
+        var activeList = new List<Vector2Int>(_activeChunks.Keys);
+        for (int i = 0; i < activeList.Count; i++)
+        {
+            UnloadChunk(activeList[i]);
+        }
+        _activeChunks.Clear();
+        _desiredChunks.Clear();
+        _rebuildQueue.Clear();
+        _queuedRebuilds.Clear();
+
+        // 2. Cancel and clear background generation scheduler
+        if (_scheduler != null)
+        {
+            _scheduler.CancelAndClear();
+        }
+
+        // 3. Swap profile, settings, generator
+        currentDimensionProfile = newProfile;
+        settings = newProfile.settings;
+        worldGenerator = newProfile.generator;
+
+        if (settings != null && settings.blockRegistry != null)
+        {
+            settings.blockRegistry.Initialize();
+        }
+
+        // Derive dimension seed (stable hash; salt 0 keeps the base seed untouched — see DimensionSeed)
+        _seed = ResolveDimensionSeed(newProfile, settings);
+
+        // Prepare generator
+        if (worldGenerator != null)
+        {
+            worldGenerator.Prepare();
+        }
+
+        // 4. Swap chunk data cache reference
+        _chunkDataCache.Clear();
+        if (targetCache != null)
+        {
+            foreach (var kvp in targetCache)
+            {
+                _chunkDataCache[kvp.Key] = kvp.Value;
+            }
+        }
+
+        // 5. Create fresh scheduler
+        if (worldGenerator != null && settings != null)
+        {
+            _scheduler = new ChunkGenerationScheduler(worldGenerator, settings, _seed, settings.maxConcurrentChunkGenerations);
+        }
+
+        // 6. Reset player tracking coord
+        _lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+    }
+
+    /// <summary>Copies current chunk cache contents into the destination dictionary.</summary>
+    public void ExportChunkDataCache(Dictionary<Vector2Int, VoxelChunkData> destination)
+    {
+        if (destination == null) return;
+        destination.Clear();
+        foreach (var kvp in _chunkDataCache)
+        {
+            destination[kvp.Key] = kvp.Value;
+        }
     }
 
     private void Start()
@@ -444,6 +554,15 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         int lx = wx - data.WorldOriginX;
         int lz = wz - data.WorldOriginZ;
 
+        // In enclosed indoor dimensions (e.g. Backrooms), we don't spawn on top of the roof!
+        // Pick the floor with the MOST headroom (a room floor beats the cramped ceiling void),
+        // searching outward from the requested column if that column is solid (pillar/wall).
+        if (currentDimensionProfile != null && currentDimensionProfile.isEnclosed &&
+            TryFindEnclosedSpawn(wx, wz, currentDimensionProfile.minSpawnClearance, out Vector3 enclosedPos))
+        {
+            return enclosedPos;
+        }
+
         for (int ly = data.Height - 1; ly >= 0; ly--)
         {
             byte id = data.GetBlock(lx, ly, lz);
@@ -457,6 +576,74 @@ public class VoxelWorldManager : MonoBehaviour, IChunkNeighbourSampler
         // Column came back fully air (shouldn't normally happen) — fall back to
         // just above the world floor instead of leaving the caller with garbage.
         return new Vector3(wx + 0.5f, settings.minHeight + 1f, wz + 0.5f);
+    }
+
+    /// <summary>
+    /// Asks the active dimension's generator for a guaranteed arrival point (safe spawn + optional
+    /// wall anchor for the return rift). Returns false if the generator doesn't provide one.
+    /// </summary>
+    public bool TryGetArrivalPoint(out DimensionArrivalPoint point)
+    {
+        EnsureInitialized();
+        point = default;
+        return worldGenerator != null && settings != null &&
+               worldGenerator.TryGetArrivalPoint(settings, _seed, out point);
+    }
+
+    /// <summary>Spiral search (ring by ring) for the nearest column offering a valid indoor floor.</summary>
+    private bool TryFindEnclosedSpawn(int wx, int wz, int minClearance, out Vector3 position)
+    {
+        const int maxRing = 16;
+
+        for (int r = 0; r <= maxRing; r++)
+        {
+            for (int dx = -r; dx <= r; dx++)
+            {
+                for (int dz = -r; dz <= r; dz++)
+                {
+                    if (Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz)) != r) continue;
+                    if (TryFindEnclosedFloor(wx + dx, wz + dz, minClearance, out position)) return true;
+                }
+            }
+        }
+
+        position = default;
+        return false;
+    }
+
+    /// <summary>Returns the solid block in the column with the largest contiguous air gap above it, if that gap is at least minClearance.</summary>
+    private bool TryFindEnclosedFloor(int wx, int wz, int minClearance, out Vector3 position)
+    {
+        VoxelChunkData data = GetOrGenerateChunkData(BlockToChunkCoord(wx, wz));
+        int lx = wx - data.WorldOriginX;
+        int lz = wz - data.WorldOriginZ;
+
+        int bestFloor = -1;
+        int bestClearance = 0;
+
+        for (int ly = 0; ly < data.Height - 1; ly++)
+        {
+            if (!settings.blockRegistry.IsSolid(data.GetBlock(lx, ly, lz))) continue;
+
+            int clearance = 0;
+            while (ly + 1 + clearance < data.Height && data.GetBlock(lx, ly + 1 + clearance, lz) == 0)
+                clearance++;
+
+            if (clearance > bestClearance)
+            {
+                bestClearance = clearance;
+                bestFloor = ly;
+            }
+        }
+
+        if (bestFloor >= 0 && bestClearance >= minClearance)
+        {
+            position = new Vector3(wx + 0.5f, settings.LocalYToWorld(bestFloor) + 1f, wz + 0.5f);
+            return true;
+        }
+
+        position = default;
+        return false;
     }
 
     // ── Pre-spawn bootstrapping (see WorldBootstrapper) ─────────────────────────

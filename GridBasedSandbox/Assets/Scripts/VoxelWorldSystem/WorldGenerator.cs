@@ -35,4 +35,16 @@ public abstract class WorldGenerator : ScriptableObject
     public virtual void Prepare() { }
 
     public abstract void Generate(VoxelChunkData data, VoxelWorldSettings settings, int seed);
+
+    /// <summary>
+    /// Optional. Generators that carve a reserved arrival clearing (e.g. an indoor
+    /// dimension) return a guaranteed-safe spawn point and, optionally, a wall anchor
+    /// for a return portal. Must be deterministic for a given seed. Default: none —
+    /// callers fall back to scanning the voxel column.
+    /// </summary>
+    public virtual bool TryGetArrivalPoint(VoxelWorldSettings settings, int seed, out DimensionArrivalPoint point)
+    {
+        point = default;
+        return false;
+    }
 }

@@ -1,0 +1,54 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d1e2f3a4b5c6d7e8f9a01b2c3d4e5f02, type: 3}
+  m_Name: Room_HazardRedRoom
+  m_EditorClassIdentifier: Assembly-CSharp::BackroomsFeatureRoom
+  roomName: Hazard Red Sub-Chamber
+  width: 16
+  length: 16
+  rarityWeight: 0.8
+  brushes:
+  - label: Carve Air
+    layer: 0
+    offset: {x: 0, y: 0, z: 0}
+    size: {x: 16, y: 1, z: 16}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 0}
+  - label: Stained Carpet Floor
+    layer: 3
+    offset: {x: 0, y: 0, z: 0}
+    size: {x: 16, y: 1, z: 16}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 11400000, guid: a3b4c5d6e7f8091a2b3c4d5e6f708003, type: 2}
+  - label: Ceiling Tile
+    layer: 2
+    offset: {x: 0, y: 0, z: 0}
+    size: {x: 16, y: 1, z: 16}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 11400000, guid: 965fcb95b3f74487a1ac60882778d7b4, type: 2}
+  - label: Red Warning Lights
+    layer: 2
+    offset: {x: 3, y: 0, z: 3}
+    size: {x: 1, y: 1, z: 1}
+    repeat: {x: 3, y: 3}
+    spacing: {x: 5, y: 5}
+    block: {fileID: 11400000, guid: a2b3c4d5e6f708192a3b4c5d6e7f8002, type: 2}
+  - label: Center Pillar 2x2
+    layer: 0
+    offset: {x: 7, y: 0, z: 7}
+    size: {x: 2, y: 1, z: 2}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 11400000, guid: 2694d1c7a473493980da364f8501dfe9, type: 2}

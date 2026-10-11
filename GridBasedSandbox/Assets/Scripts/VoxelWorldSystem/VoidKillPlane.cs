@@ -27,12 +27,32 @@ public class VoidKillPlane : MonoBehaviour
     [Tooltip("World block X/Z to teleport to. Uses spawn column by default.")]
     [SerializeField] private Vector2Int safeColumn = Vector2Int.zero;
 
+    [Tooltip("If true, falling into the void in Overworld triggers a noclip transition into Backrooms Level 0!")]
+    [SerializeField] private bool noclipToBackroomsOnVoidFall = true;
+
+    [Tooltip("Dimension in which falling into the void triggers the noclip transition.")]
+    [SerializeField] private string noclipFromDimensionId = "overworld";
+
+    [Tooltip("Dimension the player noclips into.")]
+    [SerializeField] private string noclipToDimensionId = "backrooms_level0";
+
     private void Update()
     {
-        if (settings == null) return;
+        var activeSettings = settings != null ? settings : (VoxelWorldManager.Instance != null ? VoxelWorldManager.Instance.Settings : null);
+        if (activeSettings == null) return;
 
-        float killY = settings.minHeight - depthBelowMin;
+        float killY = activeSettings.minHeight - depthBelowMin;
         if (transform.position.y >= killY) return;
+
+        // Lore: Noclip out of reality into Backrooms
+        if (noclipToBackroomsOnVoidFall && DimensionManager.Instance != null &&
+            !DimensionManager.Instance.IsTransitioning &&
+            DimensionManager.Instance.CurrentDimensionId.Equals(noclipFromDimensionId, System.StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.Log("[VoidKillPlane] Player noclipped out of reality into Backrooms Level 0!");
+            DimensionManager.Instance.SwitchDimension(noclipToDimensionId);
+            return;
+        }
 
         // Resolve world manager
         var mgr = worldManager != null ? worldManager : VoxelWorldManager.Instance;
@@ -41,14 +61,17 @@ public class VoidKillPlane : MonoBehaviour
             // Fallback: just teleport above min height
             Vector3 fallbackPos = new Vector3(
                 transform.position.x,
-                settings.minHeight + 10f,
+                activeSettings.minHeight + 10f,
                 transform.position.z);
             TeleportPlayer(fallbackPos);
             Debug.LogWarning("[VoidKillPlane] No VoxelWorldManager — teleported to fallback height.");
             return;
         }
 
-        Vector3 safePos = mgr.GetSpawnPosition(safeColumn.x, safeColumn.y);
+        // Indoor dimensions provide a guaranteed arrival point; column (0,0) may well be a wall there.
+        Vector3 safePos = mgr.TryGetArrivalPoint(out DimensionArrivalPoint arrival)
+            ? arrival.position
+            : mgr.GetSpawnPosition(safeColumn.x, safeColumn.y);
         TeleportPlayer(safePos);
         Debug.Log($"[VoidKillPlane] Player fell below void — teleported to {safePos}.");
     }

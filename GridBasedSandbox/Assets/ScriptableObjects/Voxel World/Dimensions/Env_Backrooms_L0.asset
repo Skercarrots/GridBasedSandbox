@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8fc412c562724eeab44846f1f8d23659, type: 3}
+  m_Name: Env_Backrooms_L0
+  m_EditorClassIdentifier: Assembly-CSharp::DimensionEnvironmentProfile
+  enableFog: 1
+  fogColor: {r: 0.698, g: 0.647, b: 0.384, a: 1}
+  fogMode: 3
+  fogDensity: 0.016
+  linearFogStart: 0
+  linearFogEnd: 60
+  skyboxMaterial: {fileID: 0}
+  ambientLightColor: {r: 0.722, g: 0.655, b: 0.416, a: 1}
+  enableDirectionalLight: 0
+  directionalLightColor: {r: 0.9, g: 0.85, b: 0.6, a: 1}
+  directionalLightIntensity: 0.02
+  ambientAudioClip: {fileID: 0}
+  ambientAudioVolume: 0.45
+  useProcedural60HzHum: 1
+  enableLightFlicker: 1
+  flickerIntervalRange: {x: 4, y: 15}
+  flickerBrightness: 0.45

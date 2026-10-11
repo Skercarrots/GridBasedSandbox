@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d1e2f3a4b5c6d7e8f9a01b2c3d4e5f02, type: 3}
+  m_Name: Room_ColumnForest
+  m_EditorClassIdentifier: Assembly-CSharp::BackroomsFeatureRoom
+  roomName: Hypostyle Monolith Hall
+  width: 20
+  length: 20
+  rarityWeight: 0.9
+  brushes:
+  - label: Carve Grand Chamber Air
+    layer: 0
+    offset: {x: 0, y: 0, z: 0}
+    size: {x: 20, y: 1, z: 20}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 0}
+  - label: Restore Ceiling
+    layer: 2
+    offset: {x: 0, y: 0, z: 0}
+    size: {x: 20, y: 1, z: 20}
+    repeat: {x: 1, y: 1}
+    spacing: {x: 4, y: 4}
+    block: {fileID: 11400000, guid: 965fcb95b3f74487a1ac60882778d7b4, type: 2}
+  - label: Monolith Columns 2x2
+    layer: 0
+    offset: {x: 3, y: 0, z: 3}
+    size: {x: 2, y: 1, z: 2}
+    repeat: {x: 3, y: 3}
+    spacing: {x: 6, y: 6}
+    block: {fileID: 11400000, guid: 2694d1c7a473493980da364f8501dfe9, type: 2}
+  - label: Light Panels
+    layer: 2
+    offset: {x: 6, y: 0, z: 6}
+    size: {x: 1, y: 1, z: 1}
+    repeat: {x: 2, y: 2}
+    spacing: {x: 6, y: 6}
+    block: {fileID: 11400000, guid: c0d49bc9f04e45fd92e1bb85605ed270, type: 2}

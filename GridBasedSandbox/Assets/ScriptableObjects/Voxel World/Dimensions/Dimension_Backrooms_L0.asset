@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f19d006ec035b4146927291bfa235da5, type: 3}
+  m_Name: Dimension_Backrooms_L0
+  m_EditorClassIdentifier: Assembly-CSharp::DimensionProfile
+  dimensionId: backrooms_level0
+  dimensionName: The Backrooms - Level 0
+  generator: {fileID: 11400000, guid: ba8530ce6a7547b290659933d283109d, type: 2}
+  settings: {fileID: 11400000, guid: f96e554c08e64fa2810890e44e055d5d, type: 2}
+  environmentProfile: {fileID: 11400000, guid: f8510b08b7e041978323389c85510e19, type: 2}
+  defaultSpawnColumn: {x: 3, y: 3}
+  isEnclosed: 1
+  minSpawnClearance: 3
+  seedSalt: 777
+  spawnReturnPortal: 1
+  returnDimensionId: overworld

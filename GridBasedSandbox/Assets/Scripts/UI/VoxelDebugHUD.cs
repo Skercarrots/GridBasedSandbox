@@ -196,6 +196,7 @@ public class VoxelDebugHUD : MonoBehaviour
         var worldManager = VoxelWorldManager.Instance;
         var settings = worldManager != null ? worldManager.Settings : null;
         var overworldGen = worldManager != null ? worldManager.WorldGenerator as OverworldGenerator : null;
+        var backroomsGen = worldManager != null ? worldManager.WorldGenerator as BackroomsGenerator : null;
         int seed = worldManager != null ? worldManager.Seed : 0;
         int chunkWidth = settings != null ? settings.chunkWidth : 16;
 
@@ -211,6 +212,10 @@ public class VoxelDebugHUD : MonoBehaviour
 
         if (worldManager != null)
         {
+            string dimName = worldManager.CurrentDimensionProfile != null 
+                ? worldManager.CurrentDimensionProfile.dimensionName 
+                : (DimensionManager.Instance != null ? DimensionManager.Instance.CurrentDimensionId : "Overworld");
+            _leftSb.Append("<color=#AAAAAA>Dimension:</color> <color=#FFD700><b>").Append(dimName).AppendLine("</b></color>");
             _leftSb.Append("<color=#AAAAAA>Seed:</color> <color=#FFFFFF>").Append(seed).AppendLine("</color>");
             _leftSb.Append("<color=#AAAAAA>Chunks:</color> <color=#55FF55>").Append(worldManager.ActiveChunkCount).Append("</color> active, ")
                    .Append("<color=#FFFFFF>").Append(worldManager.CachedChunkCount).Append("</color> cached, ")
@@ -291,6 +296,22 @@ public class VoxelDebugHUD : MonoBehaviour
                 _leftSb.Append("<color=#AAAAAA>Surface Y (Est):</color> <color=#55FF55>").Append(surfaceY).Append("</color>")
                        .Append(" <color=#888888>(delta: ").Append(yOffset >= 0 ? "+" + yOffset : yOffset.ToString()).AppendLine(")</color>");
             }
+            else if (backroomsGen != null)
+            {
+                var continent = backroomsGen.GetContinentAt(bx, bz, seed);
+                string contName = continent != null ? continent.continentName : "Starting Sector";
+                var zone = backroomsGen.GetZoneAt(bx, bz, seed);
+                string zoneName = zone != null ? zone.zoneName : "Standard Modular Lobby";
+
+                _leftSb.Append("<color=#AAAAAA>Continent:</color> <color=#00FFFF><b>").Append(contName).AppendLine("</b></color>");
+                _leftSb.Append("<color=#AAAAAA>Sub-Zone (Biome):</color> <color=#FFD700><b>").Append(zoneName).AppendLine("</b></color>");
+                if (zone != null)
+                {
+                    _leftSb.Append("<color=#AAAAAA>Modularity:</color> Grid ").Append(zone.hallSize).Append("x").Append(zone.hallSize)
+                           .Append(" | Walls: ").Append((zone.fullWallProbability * 100f).ToString("F0")).Append("%")
+                           .Append(" | Pillars: ").Append((zone.pillarProbability * 100f).ToString("F0")).AppendLine("%");
+                }
+            }
         }
         else
         {
@@ -298,7 +319,7 @@ public class VoxelDebugHUD : MonoBehaviour
         }
 
         _leftSb.AppendLine();
-        _leftSb.Append("<color=#666666>[F3] Toggle HUD  |  [F1] Dev Menu</color>");
+        _leftSb.Append("<color=#666666>[F3] Toggle HUD  |  [F1] Dev Menu  |  [M] Toggle Map</color>");
 
         if (leftText != null)
             leftText.text = _leftSb.ToString();

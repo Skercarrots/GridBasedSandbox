@@ -647,6 +647,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5e61f794eb779544682fb5dd39788d24, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::VoxelWorldManager
+  currentDimensionProfile: {fileID: 11400000, guid: a4b30e773d47472a8e7319d4c406c8e7, type: 2}
   settings: {fileID: 11400000, guid: 286ce01d0398300498e2c1e5c54fb744, type: 2}
   worldGenerator: {fileID: 11400000, guid: f2a597a791abbbe409468c19974d0c0a, type: 2}
   playerTransform: {fileID: 0}

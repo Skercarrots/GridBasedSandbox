@@ -436,6 +436,38 @@ public class DevMenuController : MonoBehaviour
         player?.ResetVelocity();
     }
 
+    public void TravelToOverworld()
+    {
+        if (DimensionManager.Instance != null)
+        {
+            DimensionManager.Instance.ReturnToOverworldBase();
+        }
+        else
+        {
+            Debug.LogWarning("[DevMenuController] DimensionManager not found in scene.");
+        }
+    }
+
+    public void TravelToBackrooms()
+    {
+        if (DimensionManager.Instance != null)
+        {
+            DimensionManager.Instance.SwitchDimension("backrooms_level0");
+        }
+        else
+        {
+            Debug.LogWarning("[DevMenuController] DimensionManager not found in scene.");
+        }
+    }
+
+    public void ToggleRealtimeMap()
+    {
+        if (VoxelMapController.Instance != null)
+        {
+            VoxelMapController.Instance.ToggleMap();
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  World & Diagnostics Actions
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1264,6 +1296,34 @@ public class DevMenuController : MonoBehaviour
         CreatePillButton(row2.transform, "Nudge Up +10m", 110f, 24f, () => TeleportNudgeUp(10f));
         CreatePillButton(row2.transform, "Nudge Up +50m", 110f, 24f, () => TeleportNudgeUp(50f));
         CreatePillButton(row2.transform, "Reset Velocity (Stop)", 160f, 24f, ResetPlayerVelocity);
+
+        // ── Card 3: Interdimensional Travel ─────────────────────────────────
+        GameObject card3 = CreateCard(parent, "DimensionTravelCard", 86f);
+        var dimLabel = CreateTMPText(card3.transform, "DimLabel", 12f, TextAlignmentOptions.MidlineLeft);
+        dimLabel.rectTransform.anchorMin = new Vector2(0f, 1f);
+        dimLabel.rectTransform.anchorMax = new Vector2(1f, 1f);
+        dimLabel.rectTransform.pivot = new Vector2(0.5f, 1f);
+        dimLabel.rectTransform.anchoredPosition = new Vector2(0f, -8f);
+        dimLabel.rectTransform.sizeDelta = new Vector2(-24f, 20f);
+        dimLabel.text = "<color=#FFD700><b>Interdimensional Travel:</b></color>";
+
+        GameObject dimRow = new GameObject("DimRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        dimRow.transform.SetParent(card3.transform, false);
+        RectTransform dimRowRt = dimRow.GetComponent<RectTransform>();
+        dimRowRt.anchorMin = new Vector2(0f, 1f);
+        dimRowRt.anchorMax = new Vector2(1f, 1f);
+        dimRowRt.pivot = new Vector2(0.5f, 1f);
+        dimRowRt.anchoredPosition = new Vector2(0f, -34f);
+        dimRowRt.sizeDelta = new Vector2(-24f, 26f);
+
+        HorizontalLayoutGroup dimHlg = dimRow.GetComponent<HorizontalLayoutGroup>();
+        dimHlg.spacing = 8f;
+        dimHlg.childControlWidth = true;
+        dimHlg.childControlHeight = true;
+
+        CreatePillButton(dimRow.transform, "Overworld Base", 150f, 24f, TravelToOverworld);
+        CreatePillButton(dimRow.transform, "Backrooms (Level 0)", 175f, 24f, TravelToBackrooms);
+        CreatePillButton(dimRow.transform, "Toggle Map (M)", 140f, 24f, ToggleRealtimeMap);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

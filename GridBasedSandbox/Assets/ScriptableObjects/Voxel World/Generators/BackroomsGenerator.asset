@@ -1,0 +1,49 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b001895c0b3c45a9ad7fedd4dde4cceb, type: 3}
+  m_Name: BackroomsGenerator
+  m_EditorClassIdentifier: Assembly-CSharp::BackroomsGenerator
+  carpetBlock: {fileID: 11400000, guid: 8c568c71c48b46cda2480292810acc22, type: 2}
+  wallpaperBlock: {fileID: 11400000, guid: 2694d1c7a473493980da364f8501dfe9, type: 2}
+  ceilingBlock: {fileID: 11400000, guid: 965fcb95b3f74487a1ac60882778d7b4, type: 2}
+  fluorescentLightBlock: {fileID: 11400000, guid: c0d49bc9f04e45fd92e1bb85605ed270, type: 2}
+  halfWallCapBlock: {fileID: 11400000, guid: a4b5c6d7e8f90a1b2c3d4e5f60718004, type: 2}
+  plenumBlock: {fileID: 11400000, guid: 5d3ff63b11e345b5800ee608a4776a16, type: 2}
+  bedrockBlock: {fileID: 11400000, guid: 13494f1a6d278a5429b3eb9c9c5f14b7, type: 2}
+  defaultLayout: {fileID: 11400000, guid: e1d2c3b4a5f60718293a4b5c6d7e0003, type: 2}
+  enableContinentalBulkheads: 0
+  continentSize: 256
+  continentBorderThickness: 0
+  continentalWarpAmplitude: 44
+  continentalWarpScale: 0.006
+  gatewaysPerContinentEdge: 2
+  gatewayWidth: 3
+  continents:
+  - {fileID: 11400000, guid: c0a1b2c3d4e5f60718293a4b5c6d0001, type: 2}
+  - {fileID: 11400000, guid: c0a1b2c3d4e5f60718293a4b5c6d0002, type: 2}
+  - {fileID: 11400000, guid: c0a1b2c3d4e5f60718293a4b5c6d0003, type: 2}
+  macroSectorSize: 48
+  zones:
+  - {fileID: 11400000, guid: e1a1b2c3d4e5f60718293a4b5c6d7e01, type: 2}
+  - {fileID: 11400000, guid: e2a1b2c3d4e5f60718293a4b5c6d7e02, type: 2}
+  - {fileID: 11400000, guid: e3a1b2c3d4e5f60718293a4b5c6d7e03, type: 2}
+  - {fileID: 11400000, guid: e4a1b2c3d4e5f60718293a4b5c6d7e04, type: 2}
+  - {fileID: 11400000, guid: e5a1b2c3d4e5f60718293a4b5c6d7e05, type: 2}
+  specialRoomRegionSize: 64
+  specialRoomChance: 0.35
+  specialRooms:
+  - {fileID: 11400000, guid: f1a1b2c3d4e5f60718293a4b5c6d7f01, type: 2}
+  - {fileID: 11400000, guid: f2a1b2c3d4e5f60718293a4b5c6d7f02, type: 2}
+  - {fileID: 11400000, guid: f3a1b2c3d4e5f60718293a4b5c6d7f03, type: 2}
+  - {fileID: 11400000, guid: f4a1b2c3d4e5f60718293a4b5c6d7f04, type: 2}
+  - {fileID: 11400000, guid: f5a1b2c3d4e5f60718293a4b5c6d7f05, type: 2}
+  freeHeight: 3
